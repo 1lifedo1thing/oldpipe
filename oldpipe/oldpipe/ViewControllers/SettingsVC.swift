@@ -379,7 +379,8 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         let payload: [String: Any] = [
             "version": 1,
             "subscriptions": SubscriptionManager.all().map { $0.toDict() },
-            "playlists": PlaylistManager.all().map { $0.toDict() }
+            "playlists": PlaylistManager.all().map { $0.toDict() },
+            "groups": ChannelGroupManager.all().map { $0.toDict() }
         ]
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted),
@@ -445,10 +446,17 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
             plCount = parsed.count
         }
 
-        if subCount == 0 && plCount == 0 {
-            setStatus("No subscriptions or playlists found in the pasted text.", ok: false)
+        var grCount = 0
+        if let grs = dict["groups"] as? [[String: Any]] {
+            let parsed = grs.compactMap { ChannelGroup.from(dict: $0) }
+            ChannelGroupManager.merge(parsed)
+            grCount = parsed.count
+        }
+
+        if subCount == 0 && plCount == 0 && grCount == 0 {
+            setStatus("No subscriptions, playlists or groups found in the pasted text.", ok: false)
         } else {
-            setStatus("Imported \(subCount) subscription(s) and \(plCount) playlist(s).", ok: true)
+            setStatus("Imported \(subCount) subscription(s), \(plCount) playlist(s) and \(grCount) group(s).", ok: true)
         }
     }
 
@@ -479,7 +487,7 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         alert.delegate = self
         alert.tag = 2
         alert.title = "Reset Everything?"
-        alert.message = "This erases ALL subscriptions, playlists, watch history, downloads and caches. This cannot be undone."
+        alert.message = "This erases ALL subscriptions, playlists, groups, watch history, downloads and caches. This cannot be undone."
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Reset All")
         alert.cancelButtonIndex = 0
@@ -492,12 +500,13 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         if alertView.tag == 2 {
             SubscriptionManager.clearAll()
             PlaylistManager.clearAll()
+            ChannelGroupManager.clearAll()
             HistoryManager.clear()
             DownloadManager.clearAll()
             HomeVC.clearFeedCache()
             AsyncImageView.purgeCache()
             refreshCacheSize()
-            setStatus("Everything reset. Subscriptions, playlists, history, downloads and caches cleared.", ok: true)
+            setStatus("Everything reset. Subscriptions, playlists, groups, history, downloads and caches cleared.", ok: true)
         } else {
             HomeVC.clearFeedCache()
             AsyncImageView.purgeCache()

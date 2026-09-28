@@ -41,6 +41,10 @@
 		BB000001000000000000BC01 /* YoutubeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB01 /* YoutubeAPI.swift */; };
 		BB000001000000000000BC02 /* CurlFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB02 /* CurlFetcher.swift */; };
 		BB000001000000000000BC24 /* ChannelRSS.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB24 /* ChannelRSS.swift */; };
+		BB000001000000000000BC25 /* ChannelGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB25 /* ChannelGroup.swift */; };
+		BB000001000000000000BC26 /* ChannelGroupManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB26 /* ChannelGroupManager.swift */; };
+		BB000001000000000000BC27 /* YTPlaylist.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB27 /* YTPlaylist.swift */; };
+		BB000001000000000000BC29 /* YTPlaylistVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB29 /* YTPlaylistVC.swift */; };
 		BB000001000000000000BC1E /* CastSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB1E /* CastSession.swift */; };
 		BB000001000000000000BC1F /* StreamResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB1F /* StreamResolver.swift */; };
 		BB000001000000000000BC21 /* HLSTransmuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB21 /* HLSTransmuxer.swift */; };
@@ -131,6 +135,10 @@
 		BB000001000000000000BB01 /* YoutubeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoutubeAPI.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB02 /* CurlFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurlFetcher.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB24 /* ChannelRSS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelRSS.swift; sourceTree = "<group>"; };
+		BB000001000000000000BB25 /* ChannelGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelGroup.swift; sourceTree = "<group>"; };
+		BB000001000000000000BB26 /* ChannelGroupManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChannelGroupManager.swift; sourceTree = "<group>"; };
+		BB000001000000000000BB27 /* YTPlaylist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YTPlaylist.swift; sourceTree = "<group>"; };
+		BB000001000000000000BB29 /* YTPlaylistVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YTPlaylistVC.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB1E /* CastSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastSession.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB1F /* StreamResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamResolver.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB21 /* HLSTransmuxer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLSTransmuxer.swift; sourceTree = "<group>"; };
@@ -299,6 +307,9 @@
 				BB000001000000000000BB1A /* HistoryManager.swift */,
 				BB000001000000000000BB22 /* DebugLog.swift */,
 				BB000001000000000000BB15 /* PlaylistManager.swift */,
+				BB000001000000000000BB25 /* ChannelGroup.swift */,
+				BB000001000000000000BB26 /* ChannelGroupManager.swift */,
+				BB000001000000000000BB27 /* YTPlaylist.swift */,
 				BB000001000000000000BB12 /* VideoPlayer.swift */,
 			);
 			name = Models;
@@ -330,6 +341,7 @@
 				BB000001000000000000BB16 /* PlaylistsVC.swift */,
 				BB000001000000000000BB1B /* HistoryVC.swift */,
 				BB000001000000000000BB20 /* ShortsPlayerVC.swift */,
+				BB000001000000000000BB29 /* YTPlaylistVC.swift */,
 			);
 			name = ViewControllers;
 			path = ViewControllers;
@@ -492,6 +504,10 @@
 				BB000001000000000000BC01 /* YoutubeAPI.swift in Sources */,
 				BB000001000000000000BC02 /* CurlFetcher.swift in Sources */,
 				BB000001000000000000BC24 /* ChannelRSS.swift in Sources */,
+				BB000001000000000000BC25 /* ChannelGroup.swift in Sources */,
+				BB000001000000000000BC26 /* ChannelGroupManager.swift in Sources */,
+				BB000001000000000000BC27 /* YTPlaylist.swift in Sources */,
+				BB000001000000000000BC29 /* YTPlaylistVC.swift in Sources */,
 				BB000001000000000000BC1E /* CastSession.swift in Sources */,
 				BB000001000000000000BC1F /* StreamResolver.swift in Sources */,
 				BB000001000000000000BC21 /* HLSTransmuxer.swift in Sources */,

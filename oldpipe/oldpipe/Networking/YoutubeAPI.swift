@@ -261,6 +261,43 @@ class YoutubeAPI {
         }
     }
 
+    // MARK: - Playlists (channel tab + contents)
+
+    // The playlists listed on a channel's "Playlists" tab. One page only (~30) — the tab's
+    // continuation is not wired up.
+    static func getChannelPlaylists(channelId: String, priority: Bool = false, completion: @escaping ([YTPlaylist]) -> Void) {
+        // params "EglwbGF5bGlzdHPyBgQKAkIA" = the channel's "Playlists" tab.
+        let payload = body(client: webClient, extra: ["browseId": channelId, "params": "EglwbGF5bGlzdHPyBgQKAkIA"])
+        guard let jsonStr = toJSON(payload) else { completion([]); return }
+        let url = "\(baseURL)/browse?prettyPrint=false"
+        CurlFetcher.postJSON(url: url, body: jsonStr, headers: jsonHeaders,
+                             userAgent: webUserAgent, timeout: 30, priority: priority) { data in
+            guard let data = data else { completion([]); return }
+            (priority ? interactiveParseQueue : parseQueue).async {
+                let result = parsePlaylistsResponse(data)
+                DispatchQueue.main.async { completion(result) }
+            }
+        }
+    }
+
+    // The videos in a playlist. browseId is "VL" + the playlist id; the response uses the
+    // same lockupViewModel shape as a channel page, so collectVideoItems parses it as-is and
+    // paging continues through getChannelContinuation.
+    // completion: (videos, continuation token for the next page or nil)
+    static func getPlaylistVideos(playlistId: String, priority: Bool = false, completion: @escaping ([Video], String?) -> Void) {
+        let payload = body(client: webClient, extra: ["browseId": "VL\(playlistId)"])
+        guard let jsonStr = toJSON(payload) else { completion([], nil); return }
+        let url = "\(baseURL)/browse?prettyPrint=false"
+        CurlFetcher.postJSON(url: url, body: jsonStr, headers: jsonHeaders,
+                             userAgent: webUserAgent, timeout: 30, priority: priority) { data in
+            guard let data = data else { completion([], nil); return }
+            (priority ? interactiveParseQueue : parseQueue).async {
+                let result = parsePlaylistVideos(data)
+                DispatchQueue.main.async { completion(result.0, result.1) }
+            }
+        }
+    }
+
     // Fetch the next page of a channel's videos using a continuation token.
     // completion: (more videos, next continuation token or nil)
     static func getChannelContinuation(token: String, channelName: String, priority: Bool = false, completion: @escaping ([Video], String?) -> Void) {
@@ -527,6 +564,84 @@ class YoutubeAPI {
         } else if let a = obj as? [Any] {
             for v in a { findDurationBadge(v, into: &out); if !out.isEmpty { return } }
         }
+    }
+
+    // Find the first thumbnailBadgeViewModel.text that looks like an item count ("8 videos").
+    // Sibling of findDurationBadge, which matches on ":" instead and so never collides.
+    private static func findCountBadge(_ obj: Any?, into out: inout String) {
+        if !out.isEmpty { return }
+        if let d = obj as? [String: Any] {
+            if let badge = dict(d["thumbnailBadgeViewModel"]),
+               let t = str(badge["text"]), t.contains("video") {
+                out = t; return
+            }
+            for (_, v) in d { findCountBadge(v, into: &out); if !out.isEmpty { return } }
+        } else if let a = obj as? [Any] {
+            for v in a { findCountBadge(v, into: &out); if !out.isEmpty { return } }
+        }
+    }
+
+    // Build a YTPlaylist from a playlist lockupViewModel (the channel "Playlists" tab format).
+    private static func playlistFromLockup(_ lm: [String: Any]) -> YTPlaylist? {
+        guard let ct = str(lm["contentType"]), ct.contains("PLAYLIST") else { return nil }
+        guard let playlistId = str(lm["contentId"]), !playlistId.isEmpty else { return nil }
+
+        let meta = dict(dict(lm["metadata"])?["lockupMetadataViewModel"])
+        let title = str(dict(meta?["title"])?["content"]) ?? ""
+
+        var countText = ""
+        findCountBadge(lm["contentImage"], into: &countText)
+
+        // Thumbnail: the lockup's own image urls are .webp / carry expiring params (blank on
+        // iOS 6), so build the canonical mqdefault.jpg from the playlist's first video instead.
+        var thumbURL = ""
+        if let cmd = dict(dict(dict(lm["itemPlayback"])?["inlinePlayerData"])?["onSelect"]),
+           let inner = dict(cmd["innertubeCommand"]),
+           let watch = dict(inner["watchEndpoint"]),
+           let vid = str(watch["videoId"]), !vid.isEmpty {
+            thumbURL = "https://i.ytimg.com/vi/\(vid)/mqdefault.jpg"
+        }
+
+        return YTPlaylist(id: playlistId, title: title, thumbnailURL: thumbURL, countText: countText)
+    }
+
+    // Walk a subtree collecting playlist lockups in document order, de-duplicated.
+    private static func collectPlaylistItems(_ obj: Any?, seen: inout Set<String>, into out: inout [YTPlaylist]) {
+        if let d = obj as? [String: Any] {
+            if let lm = dict(d["lockupViewModel"]),
+               let p = playlistFromLockup(lm), !seen.contains(p.id) {
+                seen.insert(p.id); out.append(p)
+            }
+            for (_, v) in d { collectPlaylistItems(v, seen: &seen, into: &out) }
+        } else if let a = obj as? [Any] {
+            for v in a { collectPlaylistItems(v, seen: &seen, into: &out) }
+        }
+    }
+
+    private static func parsePlaylistsResponse(_ data: Data) -> [YTPlaylist] {
+        guard let root = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+            return []
+        }
+        captureVisitorData(root)
+        var seen = Set<String>()
+        var results: [YTPlaylist] = []
+        collectPlaylistItems(root["contents"], seen: &seen, into: &results)
+        return results
+    }
+
+    // Empty channel fallbacks are deliberate: a playlist mixes channels, so each lockup's own
+    // byline (parsed by videoFromLockup) is the right source.
+    private static func parsePlaylistVideos(_ data: Data) -> ([Video], String?) {
+        guard let root = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+            return ([], nil)
+        }
+        captureVisitorData(root)
+        var seen = Set<String>()
+        var results: [Video] = []
+        collectVideoItems(root["contents"], fallbackChannelId: "", fallbackChannelName: "",
+                          seen: &seen, into: &results)
+        let token = findContinuationToken(root["contents"])
+        return (results, token)
     }
 
     // Recursively walk a JSON subtree, building Videos from any videoRenderer /

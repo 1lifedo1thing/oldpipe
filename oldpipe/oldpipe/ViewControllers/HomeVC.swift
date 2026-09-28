@@ -4,8 +4,15 @@ import UIKit
 // Root VC. A feed of the latest videos from subscribed channels.
 // Top-right "Search" button pushes SearchVC. Top-left "Menu" opens a slide-in
 // side menu with Subscriptions + Downloads. Empty state when no subscriptions.
+//
+// Also serves as a channel GROUP feed: init(groupId:) narrows every feed path to that
+// group's channels (see feedChannels()). HomeVC keeps no shared/singleton state and the
+// per-channel cache is keyed by channel id, so a group instance pushed on the nav stack is
+// safe and warms the root feed's cache (and vice versa).
 
 class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
+
+    private let groupId: String?   // nil = root Home (all subscriptions)
 
     private var videos: [Video] = []
     private var didSetupUI = false
@@ -136,12 +143,34 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         return out
     }
 
+    init(groupId: String? = nil) {
+        self.groupId = groupId
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    // The channels this feed covers: every subscription, or — for a group feed — only the
+    // subscribed channels in that group. Intersecting with the live subscription list here
+    // is what makes unsubscribing need no group cleanup.
+    private func feedChannels() -> [Channel] {
+        let subs = SubscriptionManager.all()
+        guard let gid = groupId, let g = ChannelGroupManager.group(id: gid) else { return subs }
+        let ids = Set(g.channelIds)
+        return subs.filter { ids.contains($0.id) }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "oldpipe"
         view.backgroundColor = bg
-        navigationItem.leftBarButtonItem = UIBarButtonItem(
-            title: "Menu", style: .plain, target: self, action: #selector(toggleMenu))
+        if let gid = groupId {
+            // A group feed is pushed, so the nav back button takes the Menu button's place.
+            title = ChannelGroupManager.group(id: gid)?.name ?? "Group"
+        } else {
+            title = "oldpipe"
+            navigationItem.leftBarButtonItem = UIBarButtonItem(
+                title: "Menu", style: .plain, target: self, action: #selector(toggleMenu))
+        }
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             title: "Search", style: .plain, target: self, action: #selector(showSearch))
     }
@@ -338,13 +367,15 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // MARK: - Shorts feed loading (fixed first batch — no load-more)
 
     private func loadShortsFeed() {
-        let subs = SubscriptionManager.all()
+        let subs = feedChannels()
         let ids = Set(subs.map { $0.id })
 
         if subs.isEmpty {
             shorts = []
             shortsBuiltChannelIds = []
-            shortsStatus?.text = "No subscriptions yet.\nSubscribe to channels to see their Shorts."
+            shortsStatus?.text = groupId != nil
+                ? "No channels in this group."
+                : "No subscriptions yet.\nSubscribe to channels to see their Shorts."
             shortsStatus?.isHidden = false
             shortsTable?.reloadData()
             return
@@ -421,7 +452,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     }
 
     private func rebuildShortsFromCache() {
-        let subs = SubscriptionManager.all()
+        let subs = feedChannels()
         let map = UserDefaults.standard.dictionary(forKey: HomeVC.shortsCacheKey) ?? [:]
         var merged: [Video] = []
         var seen = Set<String>()
@@ -472,7 +503,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // already-seen ordering stable. Stops naturally once every channel is exhausted.
     private func loadMoreShorts() {
         guard !shortsLoadingMore, !shortsTokens.isEmpty else { return }
-        let names = Dictionary(SubscriptionManager.all().map { ($0.id, $0.name) },
+        let names = Dictionary(feedChannels().map { ($0.id, $0.name) },
                                uniquingKeysWith: { a, _ in a })
         let pending = shortsTokens   // snapshot — completions mutate shortsTokens
         shortsLoadingMore = true
@@ -671,13 +702,15 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // MARK: - Feed
 
     private func refreshFeedIfNeeded() {
-        let subs = SubscriptionManager.all()
+        let subs = feedChannels()
         let ids = Set(subs.map { $0.id })
 
         if subs.isEmpty {
             videos = []
             builtChannelIds = []
-            statusLabel?.text = "No subscriptions yet.\nTap Search, open a channel, and tap Subscribe."
+            statusLabel?.text = groupId != nil
+                ? "No channels in this group."
+                : "No subscriptions yet.\nTap Search, open a channel, and tap Subscribe."
             statusLabel?.isHidden = false
             tableView?.reloadData()
             return
@@ -707,7 +740,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     // Pull-to-refresh: force a refetch of every channel, ignoring cache freshness.
     @objc private func handleRefresh() {
-        let subs = SubscriptionManager.all()
+        let subs = feedChannels()
         if subs.isEmpty || isLoading {
             refreshControl?.endRefreshing()
             return
@@ -776,7 +809,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     // Merge every subscribed channel's cached videos, de-dupe, and sort newest-first.
     // Reads the cache dict once (not per channel) to stay cheap on the iPhone 4S.
     private func rebuildFromCache() {
-        let subs = SubscriptionManager.all()
+        let subs = feedChannels()
         let map = UserDefaults.standard.dictionary(forKey: HomeVC.channelCacheKey) ?? [:]
         var merged: [Video] = []
         var seen = Set<String>()
@@ -792,7 +825,10 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         merged.sort { HomeVC.approxAge($0.publishedText) < HomeVC.approxAge($1.publishedText) }
         videos = merged
         if merged.isEmpty {
-            statusLabel?.text = isLoading ? "Loading subscriptions..." : "No recent videos from your subscriptions."
+            let emptyText = groupId != nil
+                ? "No recent videos from this group."
+                : "No recent videos from your subscriptions."
+            statusLabel?.text = isLoading ? "Loading subscriptions..." : emptyText
             statusLabel?.isHidden = false
         } else {
             statusLabel?.isHidden = true

@@ -1,10 +1,11 @@
 import UIKit
 
 // MARK: - ChannelVC
-// Channel page: header (name + subscribe toggle) over a 3-tab interface:
-//   0 Videos — the channel's video list (with "Load More")
-//   1 Shorts — the channel's short videos (lazy-loaded on first tap)
-//   2 About  — the channel's description text
+// Channel page: header (name + subscribe toggle) over a 4-tab interface:
+//   0 Videos    — the channel's video list (with "Load More")
+//   1 Shorts    — the channel's short videos (lazy-loaded on first tap)
+//   2 Playlists — the channel's YouTube playlists (lazy-loaded, one page, no "Load More")
+//   3 About     — the channel's description text
 // Reached by tapping a channel name in VideoPlayerVC or a row in ManageSubscriptionsVC.
 
 class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
@@ -30,7 +31,11 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var shortsLoadMoreBtn: UIButton?
     private var didLoadShorts = false
 
-    private var selectedTab = 0        // 0 Videos, 1 Shorts, 2 About
+    // Playlists tab
+    private var playlists: [YTPlaylist] = []
+    private var didLoadPlaylists = false
+
+    private var selectedTab = 0        // 0 Videos, 1 Shorts, 2 Playlists, 3 About
 
     private var didSetupUI = false
 
@@ -47,6 +52,8 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var videosStatus: UILabel!
     private var shortsTable: UITableView!
     private var shortsStatus: UILabel!
+    private var playlistsTable: UITableView!
+    private var playlistsStatus: UILabel!
     private var aboutScroll: UIScrollView!
     private var aboutLabel: UILabel!
 
@@ -81,7 +88,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     #if IOS8_TARGET
     // iPad rotates its window natively; reflow the width-dependent bits that autoresizing
-    // masks can't handle (the three equal-width tabs, the indicator, and the About text).
+    // masks can't handle (the equal-width tabs, the indicator, and the About text).
     // Guarded to iPad — iPhone is portrait-locked so this never fires there. This whole
     // override is compiled ONLY into the iOS 8 build (-D IOS8_TARGET); the iOS 6/7 build
     // never sees it, so iOS 6 behavior is provably untouched.
@@ -141,7 +148,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         tabBar.autoresizingMask = iPadFlexWidth
         view.addSubview(tabBar)
 
-        let titles = ["Videos", "Shorts", "About"]
+        let titles = ["Videos", "Shorts", "Playlists", "About"]
         let bw = w / CGFloat(titles.count)
         for (i, t) in titles.enumerated() {
             let b = UIButton(type: .custom)
@@ -182,6 +189,15 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         shortsStatus = makeStatus(width: w)
         shortsStatus.text = "Loading..."
         shortsTable.addSubview(shortsStatus)
+
+        // Playlists table
+        playlistsTable = makeTable(frame: contentFrame)
+        playlistsTable.register(YTPlaylistRowCell.self, forCellReuseIdentifier: YTPlaylistRowCell.reuseId)
+        playlistsTable.isHidden = true
+        view.addSubview(playlistsTable)
+        playlistsStatus = makeStatus(width: w)
+        playlistsStatus.text = "Loading..."
+        playlistsTable.addSubview(playlistsStatus)
 
         // About
         aboutScroll = UIScrollView(frame: contentFrame)
@@ -232,11 +248,13 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         selectedTab = index
         videosTable.isHidden = (index != 0)
         shortsTable.isHidden = (index != 1)
-        aboutScroll.isHidden = (index != 2)
+        playlistsTable.isHidden = (index != 2)
+        aboutScroll.isHidden = (index != 3)
         updateTabIndicator()
 
         if index == 1 { loadShorts() }
-        if index == 2 { updateAboutContent() }
+        if index == 2 { loadPlaylists() }
+        if index == 3 { updateAboutContent() }
     }
 
     private func updateTabIndicator() {
@@ -321,6 +339,22 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             if vids.isEmpty { self.shortsStatus?.text = "No shorts found" }
             self.shortsTable?.reloadData()
             self.updateLoadMoreFooter(tab: 1)
+        }
+    }
+
+    // MARK: - Loading (Playlists)
+
+    // One page only — the Playlists tab's own continuation is not wired up, so there is no
+    // "Load More" here (unlike the Videos/Shorts tabs).
+    private func loadPlaylists() {
+        guard !didLoadPlaylists else { return }
+        didLoadPlaylists = true
+        YoutubeAPI.getChannelPlaylists(channelId: channelId, priority: true) { [weak self] lists in
+            guard let self = self else { return }
+            self.playlists = lists
+            self.playlistsStatus?.isHidden = !lists.isEmpty
+            if lists.isEmpty { self.playlistsStatus?.text = "No playlists found" }
+            self.playlistsTable?.reloadData()
         }
     }
 
@@ -417,10 +451,16 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        if tableView == playlistsTable { return playlists.count }
         return list(for: tableView).count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if tableView == playlistsTable {
+            let cell = tableView.dequeueReusableCell(withIdentifier: YTPlaylistRowCell.reuseId, for: indexPath) as! YTPlaylistRowCell
+            cell.configure(with: playlists[indexPath.row])
+            return cell
+        }
         let cell = tableView.dequeueReusableCell(withIdentifier: VideoRowCell.reuseId, for: indexPath) as! VideoRowCell
         cell.configure(with: list(for: tableView)[indexPath.row])
         return cell
@@ -432,7 +472,83 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        if tableView == playlistsTable {
+            let p = playlists[indexPath.row]
+            navigationController?.pushViewController(YTPlaylistVC(playlistId: p.id, title: p.title), animated: true)
+            return
+        }
         let vc = VideoPlayerVC(video: list(for: tableView)[indexPath.row])
         navigationController?.pushViewController(vc, animated: true)
+    }
+}
+
+// MARK: - YTPlaylistRowCell
+// Row for the Playlists tab: thumbnail + title + "N videos". Same metrics as VideoRowCell
+// so both tables can share heightForRowAt.
+private class YTPlaylistRowCell: UITableViewCell {
+
+    static let reuseId = "YTPlaylistRowCell"
+
+    private let thumb = UIImageView()
+    private let titleLabel = UILabel()
+    private let countLabel = UILabel()
+    private var currentURL = ""
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
+
+        thumb.backgroundColor = UIColor(white: 0.15, alpha: 1)
+        thumb.contentMode = .scaleAspectFill
+        thumb.clipsToBounds = true
+        thumb.layer.cornerRadius = 4
+        thumb.layer.shouldRasterize = true
+        thumb.layer.rasterizationScale = UIScreen.main.scale
+        contentView.addSubview(thumb)
+
+        titleLabel.backgroundColor = .clear
+        titleLabel.textColor = UIColor(white: 0.95, alpha: 1)
+        titleLabel.font = UIFont.systemFont(ofSize: 14)
+        titleLabel.numberOfLines = 2
+        contentView.addSubview(titleLabel)
+
+        countLabel.backgroundColor = .clear
+        countLabel.textColor = UIColor(white: 0.55, alpha: 1)
+        countLabel.font = UIFont.systemFont(ofSize: 12)
+        contentView.addSubview(countLabel)
+
+        accessoryType = .disclosureIndicator
+        let sel = UIView()
+        sel.backgroundColor = UIColor(white: 0.15, alpha: 1)
+        selectedBackgroundView = sel
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    func configure(with playlist: YTPlaylist) {
+        titleLabel.text = playlist.title
+        countLabel.text = playlist.countText
+
+        thumb.image = nil
+        currentURL = playlist.thumbnailURL
+        let url = playlist.thumbnailURL
+        guard !url.isEmpty else { return }
+        AsyncImageView.loadCell(url: url) { [weak self] img in
+            guard let self = self, self.currentURL == url else { return }
+            self.thumb.image = img
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let w = contentView.bounds.width
+        let pad: CGFloat = 8
+        let tW: CGFloat = 120, tH: CGFloat = 64
+
+        thumb.frame = CGRect(x: pad, y: pad, width: tW, height: tH)
+        let textX = pad + tW + 10
+        let textW = max(0, w - textX - pad)
+        titleLabel.frame = CGRect(x: textX, y: pad, width: textW, height: 36)
+        countLabel.frame = CGRect(x: textX, y: pad + 38, width: textW, height: 18)
     }
 }
