@@ -86,7 +86,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         let nav = UINavigationController(rootViewController: HomeVC())
         nav.navigationBar.barStyle = .black
-        nav.navigationBar.tintColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1) // YouTube red
+        nav.navigationBar.tintColor = Theme.accent // YouTube red
         #if IOS8_TARGET || IOS7_TARGET
         // See the UINavigationControllerDelegate extension below — clear the extended-layout
         // edges so every screen starts BELOW the (translucent, iOS 7+) bars, matching the

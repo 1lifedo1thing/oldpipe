@@ -58,7 +58,6 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var aboutLabel: UILabel!
 
     private let bg = UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
-    private let accent = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
 
     private let navH: CGFloat = 64
     private let headerH: CGFloat = 96
@@ -168,7 +167,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         tabBar.addSubview(hair)
 
         tabIndicator = UIView(frame: CGRect(x: 0, y: tabBarH - 2, width: bw, height: 2))
-        tabIndicator.backgroundColor = accent
+        tabIndicator.backgroundColor = Theme.accent
         tabBar.addSubview(tabIndicator)
 
         // Content area frame
@@ -259,7 +258,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     private func updateTabIndicator() {
         for (i, b) in tabButtons.enumerated() {
-            b.setTitleColor(i == selectedTab ? accent : UIColor(white: 0.55, alpha: 1), for: .normal)
+            b.setTitleColor(i == selectedTab ? Theme.accent : UIColor(white: 0.55, alpha: 1), for: .normal)
         }
         let bw = UIScreen.main.bounds.width / CGFloat(max(tabButtons.count, 1))
         tabIndicator.frame = CGRect(x: bw * CGFloat(selectedTab), y: tabBarH - 2, width: bw, height: 2)
@@ -277,7 +276,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         } else {
             subscribeBtn.setTitle("Subscribe", for: .normal)
             subscribeBtn.setTitleColor(.white, for: .normal)
-            subscribeBtn.backgroundColor = accent
+            subscribeBtn.backgroundColor = Theme.accent
         }
     }
 

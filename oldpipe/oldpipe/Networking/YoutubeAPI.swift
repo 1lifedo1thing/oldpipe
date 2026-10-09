@@ -321,14 +321,16 @@ class YoutubeAPI {
     // The same watch-page response also carries the continuation token for the comment
     // section, so it is handed back here: opening a video gets the token for free and the
     // Comments tab then costs exactly one request per batch instead of two.
-    // completion: (related videos, comments continuation token or "")
-    static func getRelated(videoId: String, priority: Bool = false, completion: @escaping ([Video], String) -> Void) {
+    // completion: (related videos, comments continuation token — "" when the video genuinely
+    // has no comment section, nil when the request failed and nothing is known either way;
+    // the caller must not treat nil as "comments are off")
+    static func getRelated(videoId: String, priority: Bool = false, completion: @escaping ([Video], String?) -> Void) {
         let payload = body(client: webClient, extra: ["videoId": videoId])
-        guard let jsonStr = toJSON(payload) else { completion([], ""); return }
+        guard let jsonStr = toJSON(payload) else { completion([], nil); return }
         let url = "\(baseURL)/next?prettyPrint=false"
         CurlFetcher.postJSON(url: url, body: jsonStr, headers: jsonHeaders,
                              userAgent: webUserAgent, timeout: 30, priority: priority) { data in
-            guard let data = data else { completion([], ""); return }
+            guard let data = data else { completion([], nil); return }
             (priority ? interactiveParseQueue : parseQueue).async {
                 let result = parseRelated(data, excludeId: videoId)
                 DispatchQueue.main.async { completion(result.0, result.1) }
@@ -336,9 +338,9 @@ class YoutubeAPI {
         }
     }
 
-    private static func parseRelated(_ data: Data, excludeId: String) -> ([Video], String) {
+    private static func parseRelated(_ data: Data, excludeId: String) -> ([Video], String?) {
         guard let root = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-            return ([], "")
+            return ([], nil)
         }
         captureVisitorData(root)
         // The related panel lives under the secondaryResults column; walking just that
@@ -357,14 +359,17 @@ class YoutubeAPI {
     // One batch of comments (20 per page from YouTube). The same call serves both the
     // top-level list and a single thread's replies — a reply token is just another
     // continuation into the same endpoint and comes back in the same shape.
-    // completion: (comments, token for the NEXT batch or "")
-    static func getComments(token: String, priority: Bool = false, completion: @escaping ([Comment], String) -> Void) {
+    // completion: (comments, token for the NEXT batch — "" when this was the last page, nil
+    // when the request failed. On nil the caller must keep the token it already holds: the
+    // batch was never delivered, so overwriting it would strand the list with no way to ask
+    // for that page again.
+    static func getComments(token: String, priority: Bool = false, completion: @escaping ([Comment], String?) -> Void) {
         let payload = body(client: webClient, extra: ["continuation": token])
-        guard let jsonStr = toJSON(payload) else { completion([], ""); return }
+        guard let jsonStr = toJSON(payload) else { completion([], nil); return }
         let url = "\(baseURL)/next?prettyPrint=false"
         CurlFetcher.postJSON(url: url, body: jsonStr, headers: jsonHeaders,
                              userAgent: webUserAgent, timeout: 30, priority: priority) { data in
-            guard let data = data else { completion([], ""); return }
+            guard let data = data else { completion([], nil); return }
             (priority ? interactiveParseQueue : parseQueue).async {
                 let result = parseComments(data)
                 DispatchQueue.main.async { completion(result.0, result.1) }
@@ -376,9 +381,9 @@ class YoutubeAPI {
     // frameworkUpdates, and the display order (plus each thread's reply token) under
     // onResponseReceivedEndpoints. Mutation order is NOT display order, so the renderer
     // list drives the result and the entities are only looked up by key.
-    private static func parseComments(_ data: Data) -> ([Comment], String) {
+    private static func parseComments(_ data: Data) -> ([Comment], String?) {
         guard let root = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-            return ([], "")
+            return ([], nil)   // unreadable response — a failure, not an exhausted list
         }
         captureVisitorData(root)
 

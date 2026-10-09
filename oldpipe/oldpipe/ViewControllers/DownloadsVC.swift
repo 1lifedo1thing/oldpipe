@@ -236,7 +236,7 @@ private class DownloadCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         progressTrack.backgroundColor = UIColor(white: 0, alpha: 0.5)
         progressTrack.isHidden = true
-        progressFill.backgroundColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+        progressFill.backgroundColor = Theme.accent
         progressTrack.addSubview(progressFill)
         imageView?.addSubview(progressTrack)
     }

@@ -22,7 +22,6 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
     private var loadingSpinner: UIActivityIndicatorView?
 
     private let bg = UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
-    private let accent = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
     private let fieldBg = UIColor(white: 0.12, alpha: 1)
 
     // The two slow bits of loading Settings — serializing every subscription/playlist to JSON
@@ -108,7 +107,7 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         let swW = max(sw.bounds.width, 51)
         sw.frame = CGRect(x: w - pad - swW, y: y + (rowH - sw.bounds.height) / 2,
                           width: swW, height: sw.bounds.height)
-        sw.onTintColor = accent
+        sw.onTintColor = Theme.accent
         sw.isOn = AppSettings.shortsOnHome
         // Right-anchored so it stays pinned to the trailing edge when the iPad form widens.
         sw.autoresizingMask = iPadFlexLeft
@@ -230,7 +229,7 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         let debugSwW = max(debugSw.bounds.width, 51)
         debugSw.frame = CGRect(x: w - pad - debugSwW, y: y + (rowH - debugSw.bounds.height) / 2,
                           width: debugSwW, height: debugSw.bounds.height)
-        debugSw.onTintColor = accent
+        debugSw.onTintColor = Theme.accent
         debugSw.isOn = AppSettings.debugLoggingEnabled
         debugSw.autoresizingMask = iPadFlexLeft
         debugSw.addTarget(self, action: #selector(debugSwitchChanged(_:)), for: .valueChanged)
@@ -367,7 +366,7 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         b.setTitle(title, for: .normal)
         b.setTitleColor(.white, for: .normal)
         b.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
-        b.backgroundColor = isAccent ? accent : UIColor(white: 0.20, alpha: 1)
+        b.backgroundColor = isAccent ? Theme.accent : UIColor(white: 0.20, alpha: 1)
         b.layer.cornerRadius = 8
         b.autoresizingMask = iPadFlexWidth
         return b

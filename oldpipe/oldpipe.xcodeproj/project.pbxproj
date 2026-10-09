@@ -79,6 +79,7 @@
 		BB000001000000000000BC20 /* ShortsPlayerVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB20 /* ShortsPlayerVC.swift */; };
 		BB000001000000000000BC11 /* VideoRowCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB11 /* VideoRowCell.swift */; };
 		BB000001000000000000BC13 /* MiniPlayerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB13 /* MiniPlayerBar.swift */; };
+		BB000001000000000000BC2B /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB000001000000000000BB2B /* Theme.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -174,6 +175,7 @@
 		BB000001000000000000BB20 /* ShortsPlayerVC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortsPlayerVC.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB11 /* VideoRowCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoRowCell.swift; sourceTree = "<group>"; };
 		BB000001000000000000BB13 /* MiniPlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerBar.swift; sourceTree = "<group>"; };
+		BB000001000000000000BB2B /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -325,6 +327,7 @@
 				BB000001000000000000BB07 /* AsyncImageView.swift */,
 				BB000001000000000000BB11 /* VideoRowCell.swift */,
 				BB000001000000000000BB13 /* MiniPlayerBar.swift */,
+				BB000001000000000000BB2B /* Theme.swift */,
 			);
 			name = Views;
 			path = Views;
@@ -545,6 +548,7 @@
 				BB000001000000000000BC20 /* ShortsPlayerVC.swift in Sources */,
 				BB000001000000000000BC11 /* VideoRowCell.swift in Sources */,
 				BB000001000000000000BC13 /* MiniPlayerBar.swift in Sources */,
+				BB000001000000000000BC2B /* Theme.swift in Sources */,
 				A34362D62FD764210064ADE1 /* ViewController.swift in Sources */,
 				A34362FF2FD764260064ADE1 /* AppDelegate.swift in Sources */,
 			);

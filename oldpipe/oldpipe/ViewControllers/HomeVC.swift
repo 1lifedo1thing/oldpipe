@@ -66,7 +66,6 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private let menuWidth: CGFloat = 240
 
     private let bg = UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
-    private let accent = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
 
     // Coalesces the progressive "show results as they arrive" reloads into a couple of
     // smooth refreshes instead of one flicker per channel that returns.
@@ -232,7 +231,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         loadingBar = bar
 
         let seg = CALayer()
-        seg.backgroundColor = accent.cgColor
+        seg.backgroundColor = Theme.accent.cgColor
         seg.frame = CGRect(x: 0, y: 0, width: floor(w * 0.35), height: barH)
         bar.layer.addSublayer(seg)
         loadingBarSeg = seg
@@ -309,7 +308,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         tb.addSubview(hair)
 
         let ind = UIView(frame: CGRect(x: 0, y: tabBarH - 2, width: bw, height: 2))
-        ind.backgroundColor = accent
+        ind.backgroundColor = Theme.accent
         tabBar?.addSubview(ind)
         tabIndicator = ind
     }
@@ -358,7 +357,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     private func updateHomeTabIndicator() {
         for (i, b) in tabButtons.enumerated() {
-            b.setTitleColor(i == selectedHomeTab ? accent : UIColor(white: 0.55, alpha: 1), for: .normal)
+            b.setTitleColor(i == selectedHomeTab ? Theme.accent : UIColor(white: 0.55, alpha: 1), for: .normal)
         }
         let bw = UIScreen.main.bounds.width / CGFloat(max(tabButtons.count, 1))
         tabIndicator?.frame = CGRect(x: bw * CGFloat(selectedHomeTab), y: tabBarH - 2, width: bw, height: 2)
@@ -587,7 +586,7 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
         // Accent header band with the app name + tagline.
         let band = UIView(frame: CGRect(x: 0, y: 0, width: menuWidth, height: 78))
-        band.backgroundColor = accent
+        band.backgroundColor = Theme.accent
         menuPanel.addSubview(band)
 
         let header = UILabel(frame: CGRect(x: 18, y: 40, width: menuWidth - 36, height: 30))
@@ -613,14 +612,14 @@ class HomeVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
             btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 24, bottom: 0, right: 0)
             btn.setTitle(titleText, for: .normal)
             btn.setTitleColor(UIColor(white: 0.92, alpha: 1), for: .normal)
-            btn.setTitleColor(accent, for: .highlighted)
+            btn.setTitleColor(Theme.accent, for: .highlighted)
             btn.titleLabel?.font = UIFont.systemFont(ofSize: 16)
             btn.addTarget(self, action: sel, for: .touchUpInside)
             menuPanel.addSubview(btn)
 
             // accent leading tab
             let tab = UIView(frame: CGRect(x: 0, y: y + 14, width: 4, height: rowH - 28))
-            tab.backgroundColor = accent
+            tab.backgroundColor = Theme.accent
             menuPanel.addSubview(tab)
 
             // bottom separator

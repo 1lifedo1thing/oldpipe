@@ -14,7 +14,7 @@ class SearchVC: UIViewController, UISearchBarDelegate, UITableViewDataSource, UI
         sb.barStyle = .black
         sb.delegate = self
         // iOS 6: tintColor on UISearchBar is fine (it's a direct property, not UIAppearance)
-        sb.tintColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+        sb.tintColor = Theme.accent
         return sb
     }()
 

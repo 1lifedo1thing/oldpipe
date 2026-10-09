@@ -47,7 +47,7 @@ class MiniPlayerBar: UIView {
         addSubview(hairline)
 
         progressLine.frame = CGRect(x: 0, y: 0, width: 0, height: 2)
-        progressLine.backgroundColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+        progressLine.backgroundColor = Theme.accent
         addSubview(progressLine)
 
         // thumbnail (16:9, full height)

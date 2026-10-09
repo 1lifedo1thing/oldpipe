@@ -69,6 +69,13 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private var captionPlate: UIView?
     private var captionLabel: UILabel?
 
+    // Progress of one asynchronously-loaded section. `unavailable` is deliberately distinct
+    // from `ready`-with-nothing and from `failed`: it means the server answered that there is
+    // nothing to show, so the UI must say so instead of offering a retry.
+    private enum LoadState {
+        case idle, loading, ready, failed, unavailable
+    }
+
     // Everything below the meta line is laid out by relayout() from contentBelowMetaY:
     // description (below meta) → download button → share row → Related/Comments tabs. The
     // description and related arrive asynchronously (in either order) and the description
@@ -78,9 +85,19 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private var descExpanded = false
     private var descRowViews: [UIView] = []
     private var relatedVideos: [Video] = []
-    private var didRequestRelated = false   // fired (set before the request)
-    private var relatedLoaded = false       // came back — the only thing that can say "none"
-    private var tabSectionViews: [UIView] = []
+    private var relatedState = LoadState.idle
+
+    // The tab section lives in its own container so that a description expand/collapse —
+    // which only moves it down the page — costs one frame assignment instead of rebuilding
+    // every comment row. Its contents are rebuilt only when the data behind them changed.
+    private var tabContainer: UIView?
+    private var tabContentDirty = true
+    private var tabContentWidth: CGFloat = 0
+
+    // Bumped whenever this VC swaps to a different video (playlist auto-advance). Every
+    // async completion captures it and bails if it no longer matches, so a response for the
+    // previous video can't append its comments onto the new one.
+    private var contentGen = 0
 
     // Related / Comments tab strip at the bottom of the page. Comments are fetched lazily
     // (first time the tab is opened) in batches of 20, each batch handed back with the token
@@ -89,15 +106,18 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private var detailTab = 0            // 0 = Related, 1 = Comments
     private var comments: [Comment] = []
     private var commentsToken = ""       // next batch ("" = none left / not known yet)
-    private var didRequestComments = false
-    private var commentsLoading = false
+    private var commentsState = LoadState.idle
     // Replies are fetched on demand, one thread at a time, and kept keyed by parent id so
     // that a relayout() (description toggle, tab switch, next batch) does not lose them.
-    // YouTube returns replies 10 at a time, so a thread advertising "962 replies" needs its
-    // own continuation chain too — kept per parent id alongside the replies themselves.
+    // Replies arrive 10 on the first page then ~50 per page after that, so a thread
+    // advertising "962 replies" needs its own continuation chain — kept per parent id
+    // alongside the replies themselves.
     private var expandedReplies: [String: [Comment]] = [:]
     private var replyNextToken: [String: String] = [:]
-    private var loadingReplies = Set<String>()
+    private var replyStates: [String: LoadState] = [:]
+    // Wrapping a comment body is the expensive part of laying the list out, and relayout()
+    // can fire for reasons unrelated to the comments. Measured once per comment per width.
+    private var commentBodyHeights: [String: CGFloat] = [:]
 
     private var sp: VideoPlayer { return VideoPlayer.shared }
 
@@ -196,7 +216,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         }
 
         // Fetch related videos immediately on open (once per VC instance).
-        if !didRequestRelated { loadRelated() }
+        if relatedState == .idle { loadRelated() }
 
         // Own the singleton's autoplay-advance callback while we're the frontmost player,
         // so a playlist auto-advance swaps this VC's content in place.
@@ -306,22 +326,23 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
 
     private func handleAutoAdvance(_ newVideo: Video) {
         video = newVideo
+        contentGen += 1   // invalidates every in-flight response for the previous video
         streams = []
         didRequestStreams = false
         streamsStale = false
-        didRequestRelated = false
-        relatedLoaded = false
+        relatedState = .idle
         descriptionText = ""
         descExpanded = false
         relatedVideos = []
         detailTab = 0
         comments = []
         commentsToken = ""
-        didRequestComments = false
-        commentsLoading = false
+        commentsState = .idle
         expandedReplies.removeAll()
         replyNextToken.removeAll()
-        loadingReplies.removeAll()
+        replyStates.removeAll()
+        commentBodyHeights.removeAll()
+        tabContentDirty = true
         activeQualityLabel = "Auto"   // the next video picks its own tier
         resetCaptions()   // the new video has its own track list (refetched by loadStreams)
 
@@ -337,7 +358,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         channelLabel?.text = newVideo.channelName
         channelLabel?.textColor = newVideo.channelId.isEmpty
             ? UIColor(white: 0.6, alpha: 1)
-            : UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+            : Theme.accent
         channelLabel?.frame = CGRect(x: padding, y: y, width: w - padding * 2, height: 20)
         chanBtn?.frame = channelLabel?.frame ?? .zero
         chanBtn?.isHidden = newVideo.channelId.isEmpty
@@ -546,7 +567,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         // Play button overlay
         let btn = UIButton(type: .custom)
         btn.frame = CGRect(x: (w - 64) / 2, y: (videoH - 64) / 2, width: 64, height: 64)
-        btn.backgroundColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 0.9)
+        btn.backgroundColor = Theme.accent.withAlphaComponent(0.9)
         btn.layer.cornerRadius = 32
         btn.setImage(UIImage(named: "play"), for: .normal)
         btn.addTarget(self, action: #selector(playTapped), for: .touchUpInside)
@@ -596,7 +617,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         channelL.backgroundColor = .clear
         channelL.textColor = video.channelId.isEmpty
             ? UIColor(white: 0.6, alpha: 1)
-            : UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+            : Theme.accent
         channelL.font = UIFont.systemFont(ofSize: 14)
         channelL.text = video.channelName
         channelL.frame = CGRect(x: padding, y: y, width: w - padding * 2, height: 20)
@@ -694,20 +715,26 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // MARK: - Related videos
 
     private func loadRelated() {
-        didRequestRelated = true
+        relatedState = .loading
+        let gen = contentGen
         YoutubeAPI.getRelated(videoId: video.id, priority: true) { [weak self] vids, cToken in
-            guard let self = self else { return }
-            self.relatedLoaded = true
+            guard let self = self, gen == self.contentGen else { return }
+            self.relatedState = .ready
             self.relatedVideos = Array(vids.prefix(12))
-            if self.comments.isEmpty {
+            if let cToken = cToken {
                 self.commentsToken = cToken
                 // No comment section on this watch page (comments off, or an age/region gate):
                 // mark it resolved so the tab stops saying "Loading".
-                if cToken.isEmpty { self.didRequestComments = true }
+                if cToken.isEmpty { self.commentsState = .unavailable }
+            } else {
+                // The watch-page call itself failed, so whether this video has comments is
+                // unknown — offer a retry rather than claiming they are unavailable.
+                self.commentsState = .failed
             }
+            self.tabContentDirty = true
             self.relayout()
             // The user may have opened the Comments tab before the token arrived.
-            if self.detailTab == 1 && self.comments.isEmpty && !self.commentsLoading {
+            if self.detailTab == 1 && self.comments.isEmpty && self.commentsState != .loading {
                 self.loadMoreComments()
             }
         }
@@ -726,8 +753,6 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         guard let sv = scrollView else { return }
         for v in descRowViews { v.removeFromSuperview() }
         descRowViews.removeAll()
-        for v in tabSectionViews { v.removeFromSuperview() }
-        tabSectionViews.removeAll()
 
         let w = sv.bounds.width
         let padding: CGFloat = 12
@@ -748,7 +773,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         y += 44 + 12
 
         // Related / Comments tabs.
-        y = buildTabSection(startY: y, width: w)
+        y = layoutTabSection(startY: y, width: w)
 
         sv.contentSize = CGSize(width: w, height: y + 80)   // +80 clears the mini player bar
     }
@@ -795,7 +820,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         if truncated {
             let toggle = UIButton(type: .custom)
             toggle.setTitle(descExpanded ? "Show less" : "Show more", for: .normal)
-            toggle.setTitleColor(UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1), for: .normal)
+            toggle.setTitleColor(Theme.accent, for: .normal)
             toggle.titleLabel?.font = UIFont.boldSystemFont(ofSize: 13)
             toggle.contentHorizontalAlignment = .left
             toggle.frame = CGRect(x: padding, y: y, width: bodyW, height: 24)
@@ -815,18 +840,48 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         return ceil(l.sizeThatFits(CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)).height)
     }
 
-    // Tab strip ("Related" / "Comments") plus whichever list is selected. Returns the y
-    // after the last row. The strip is drawn as soon as the page exists so the user can open
-    // Comments while related videos are still in flight.
-    private func buildTabSection(startY: CGFloat, width w: CGFloat) -> CGFloat {
+    // Positions the tab section. Its contents are expensive to build (one view tree per
+    // comment, with no reuse) and most relayout() calls — description toggle, action button
+    // reflow — only change where the section starts, so the container is simply moved unless
+    // the data behind it actually changed.
+    private func layoutTabSection(startY: CGFloat, width w: CGFloat) -> CGFloat {
         guard let sv = scrollView else { return startY }
+        let container: UIView
+        if let c = tabContainer {
+            container = c
+        } else {
+            container = UIView()
+            sv.addSubview(container)
+            tabContainer = container
+        }
+        // A width change (rotation) invalidates every measured body height.
+        if w != tabContentWidth {
+            tabContentWidth = w
+            commentBodyHeights.removeAll()
+            tabContentDirty = true
+        }
+        if tabContentDirty {
+            for v in container.subviews { v.removeFromSuperview() }
+            let h = buildTabContent(width: w, into: container)
+            container.frame = CGRect(x: 0, y: startY, width: w, height: h)
+            tabContentDirty = false
+        } else {
+            container.frame = CGRect(x: 0, y: startY, width: w, height: container.frame.height)
+        }
+        return startY + container.frame.height
+    }
+
+    // Tab strip ("Related" / "Comments") plus whichever list is selected. Returns the height
+    // of the built content. The strip is drawn as soon as the page exists so the user can
+    // open Comments while related videos are still in flight. All coordinates are relative
+    // to the container.
+    private func buildTabContent(width w: CGFloat, into sv: UIView) -> CGFloat {
         let padding: CGFloat = 12
-        var y = startY
+        var y: CGFloat = 0
 
         let sep = UIView(frame: CGRect(x: 0, y: y, width: w, height: 0.5))
         sep.backgroundColor = UIColor(white: 0.2, alpha: 1)
         sv.addSubview(sep)
-        tabSectionViews.append(sep)
         y += 8
 
         let tabH: CGFloat = 38
@@ -842,42 +897,42 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             b.tag = i
             b.addTarget(self, action: #selector(detailTabTapped(_:)), for: .touchUpInside)
             sv.addSubview(b)
-            tabSectionViews.append(b)
 
             let underline = UIView(frame: CGRect(x: b.frame.minX, y: y + tabH - 2, width: tabW, height: 2))
             underline.backgroundColor = selected
-                ? UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+                ? Theme.accent
                 : UIColor(white: 0.2, alpha: 1)
             sv.addSubview(underline)
-            tabSectionViews.append(underline)
         }
         y += tabH + 10
 
         return detailTab == 0
-            ? buildRelatedRows(startY: y, width: w)
-            : buildCommentRows(startY: y, width: w)
+            ? buildRelatedRows(startY: y, width: w, into: sv)
+            : buildCommentRows(startY: y, width: w, into: sv)
     }
 
     @objc private func detailTabTapped(_ sender: UIButton) {
         guard sender.tag != detailTab else { return }
         detailTab = sender.tag
-        if detailTab == 1 && !didRequestComments { loadMoreComments() }
+        tabContentDirty = true
+        if detailTab == 1 && commentsState == .idle { loadMoreComments() }
         relayout()
     }
 
     // Related-videos list. Returns the y after the last row.
-    private func buildRelatedRows(startY: CGFloat, width w: CGFloat) -> CGFloat {
-        guard let sv = scrollView else { return startY }
+    private func buildRelatedRows(startY: CGFloat, width w: CGFloat, into sv: UIView) -> CGFloat {
         guard !relatedVideos.isEmpty else {
-            if relatedLoaded { return addPlaceholder("No related videos.", startY: startY, width: w) }
-            return addPlaceholder("Loading related videos\u{2026}", startY: startY, width: w, busy: true)
+            if relatedState == .ready {
+                return addPlaceholder("No related videos.", startY: startY, width: w, into: sv)
+            }
+            return addPlaceholder("Loading related videos\u{2026}", startY: startY, width: w,
+                                  into: sv, busy: true)
         }
         var y = startY
         for (i, v) in relatedVideos.enumerated() {
             let row = makeRelatedRow(v, index: i, width: w)
             row.frame = CGRect(x: 0, y: y, width: w, height: 80)
             sv.addSubview(row)
-            tabSectionViews.append(row)
             y += 80
         }
         return y
@@ -886,25 +941,47 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // MARK: - Comments
 
     private func loadMoreComments() {
-        guard !commentsLoading else { return }
+        guard commentsState != .loading else { return }
         // The token for the first batch arrives with the related-videos response; if it is
         // not here yet, loadRelated()'s completion retries this.
         guard !commentsToken.isEmpty else { return }
-        didRequestComments = true
-        commentsLoading = true
+        commentsState = .loading
         let token = commentsToken
+        let gen = contentGen
+        tabContentDirty = true
         relayout()
         YoutubeAPI.getComments(token: token, priority: true) { [weak self] batch, next in
-            guard let self = self else { return }
-            self.commentsLoading = false
-            self.comments.append(contentsOf: batch)
-            self.commentsToken = next
+            guard let self = self, gen == self.contentGen else { return }
+            if let next = next {
+                self.comments.append(contentsOf: batch)
+                self.commentsToken = next
+                self.commentsState = .ready
+            } else {
+                // Request failed. commentsToken is deliberately left alone — overwriting it
+                // would strand the list with no way to ask for this batch again.
+                self.commentsState = .failed
+            }
+            self.tabContentDirty = true
             self.relayout()
         }
     }
 
     @objc private func loadMoreCommentsTapped() {
         loadMoreComments()
+    }
+
+    // Retry after a failure. If the first token never arrived the watch-page call is what
+    // failed, so that is what has to be redone.
+    @objc private func retryCommentsTapped() {
+        commentsState = .idle
+        if commentsToken.isEmpty {
+            relatedState = .idle
+            tabContentDirty = true
+            relayout()
+            loadRelated()
+        } else {
+            loadMoreComments()
+        }
     }
 
     // Tapping "View N replies" pulls that one thread's replies and keeps them expanded;
@@ -916,6 +993,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         if expandedReplies[c.id] != nil {
             expandedReplies.removeValue(forKey: c.id)
             replyNextToken.removeValue(forKey: c.id)
+            replyStates.removeValue(forKey: c.id)
+            tabContentDirty = true
             relayout()
             return
         }
@@ -926,90 +1005,139 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let idx = sender.tag
         guard idx >= 0, idx < comments.count else { return }
         let c = comments[idx]
-        fetchReplies(parent: c, token: replyNextToken[c.id] ?? "")
+        // After a failure the stored token is still the one that has not been consumed yet,
+        // so the same button doubles as the retry.
+        fetchReplies(parent: c, token: replyNextToken[c.id] ?? c.repliesToken)
     }
 
     private func fetchReplies(parent c: Comment, token: String) {
-        guard !token.isEmpty, !loadingReplies.contains(c.id) else { return }
-        loadingReplies.insert(c.id)
+        guard !token.isEmpty, replyStates[c.id] != .loading else { return }
+        replyStates[c.id] = .loading
+        let gen = contentGen
+        tabContentDirty = true
         relayout()
         YoutubeAPI.getComments(token: token, priority: true) { [weak self] batch, next in
-            guard let self = self else { return }
-            self.loadingReplies.remove(c.id)
-            self.expandedReplies[c.id] = (self.expandedReplies[c.id] ?? []) + batch
-            self.replyNextToken[c.id] = next
+            guard let self = self, gen == self.contentGen else { return }
+            if let next = next {
+                self.expandedReplies[c.id] = (self.expandedReplies[c.id] ?? []) + batch
+                self.replyNextToken[c.id] = next
+                self.replyStates[c.id] = .ready
+            } else {
+                // Same as above: keep the token so "More replies" can ask again.
+                self.replyStates[c.id] = .failed
+            }
+            self.tabContentDirty = true
             self.relayout()
         }
     }
 
     // Comment list: text-only rows, replies indented under their parent, and an explicit
     // "Load more comments" button rather than scroll-triggered paging.
-    private func buildCommentRows(startY: CGFloat, width w: CGFloat) -> CGFloat {
-        guard let sv = scrollView else { return startY }
+    private func buildCommentRows(startY: CGFloat, width w: CGFloat, into sv: UIView) -> CGFloat {
         var y = startY
 
         if comments.isEmpty {
-            if commentsLoading {
-                return addPlaceholder("Loading comments\u{2026}", startY: y, width: w, busy: true)
+            switch commentsState {
+            case .failed:
+                y = addPlaceholder("Couldn't load comments.", startY: y, width: w, into: sv)
+                return addWideButton("Retry", startY: y, width: w, into: sv,
+                                     action: #selector(retryCommentsTapped))
+            case .ready, .unavailable:
+                return addPlaceholder("Comments are unavailable for this video.",
+                                      startY: y, width: w, into: sv)
+            case .idle, .loading:
+                return addPlaceholder("Loading comments\u{2026}", startY: y, width: w,
+                                      into: sv, busy: true)
             }
-            if didRequestComments {
-                return addPlaceholder("Comments are unavailable for this video.", startY: y, width: w)
-            }
-            return addPlaceholder("Loading comments\u{2026}", startY: y, width: w, busy: true)
         }
 
         for (i, c) in comments.enumerated() {
-            let row = makeCommentRow(c, index: i, width: w, indented: false)
+            let row = makeCommentRow(c, width: w, topLevelIndex: i)
             row.frame = CGRect(x: 0, y: y, width: w, height: row.frame.height)
             sv.addSubview(row)
-            tabSectionViews.append(row)
             y += row.frame.height
 
             for r in expandedReplies[c.id] ?? [] {
-                let rr = makeCommentRow(r, index: -1, width: w, indented: true)
+                let rr = makeCommentRow(r, width: w, topLevelIndex: nil)
                 rr.frame = CGRect(x: 0, y: y, width: w, height: rr.frame.height)
                 sv.addSubview(rr)
-                tabSectionViews.append(rr)
                 y += rr.frame.height
             }
-            if loadingReplies.contains(c.id) {
-                y = addPlaceholder("Loading replies\u{2026}", startY: y, width: w, indent: 36, busy: true)
-            } else if !(replyNextToken[c.id] ?? "").isEmpty {
-                let b = UIButton(type: .custom)
-                b.frame = CGRect(x: 48, y: y, width: w - 60, height: 28)
-                b.setTitle("More replies", for: .normal)
-                b.setTitleColor(UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1), for: .normal)
-                b.titleLabel?.font = UIFont.boldSystemFont(ofSize: 11)
-                b.contentHorizontalAlignment = .left
-                b.tag = i
-                b.addTarget(self, action: #selector(moreRepliesTapped(_:)), for: .touchUpInside)
-                sv.addSubview(b)
-                tabSectionViews.append(b)
-                y += 30
+            switch replyStates[c.id] {
+            case .some(.loading):
+                y = addPlaceholder("Loading replies\u{2026}", startY: y, width: w,
+                                   into: sv, indent: 36, busy: true)
+            case .some(.failed):
+                y = addReplyButton("Couldn't load replies \u{2022} Retry", startY: y, width: w,
+                                   into: sv, index: i)
+            default:
+                if !(replyNextToken[c.id] ?? "").isEmpty {
+                    y = addReplyButton("More replies", startY: y, width: w, into: sv, index: i)
+                }
             }
         }
 
-        if commentsLoading {
-            y = addPlaceholder("Loading more\u{2026}", startY: y, width: w, busy: true)
+        if commentsState == .loading {
+            y = addPlaceholder("Loading more\u{2026}", startY: y, width: w, into: sv, busy: true)
+        } else if commentsState == .failed {
+            y = addPlaceholder("Couldn't load more comments.", startY: y, width: w, into: sv)
+            y = addWideButton("Retry", startY: y, width: w, into: sv,
+                              action: #selector(retryCommentsTapped))
         } else if !commentsToken.isEmpty {
-            let padding: CGFloat = 12
-            let more = UIButton(type: .custom)
-            more.frame = CGRect(x: padding, y: y + 8, width: w - padding * 2, height: 44)
-            more.setTitle("Load more comments", for: .normal)
-            more.setTitleColor(.white, for: .normal)
-            more.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
-            more.backgroundColor = UIColor(red: 0.20, green: 0.20, blue: 0.20, alpha: 1)
-            more.layer.cornerRadius = 6
-            more.addTarget(self, action: #selector(loadMoreCommentsTapped), for: .touchUpInside)
-            sv.addSubview(more)
-            tabSectionViews.append(more)
-            y += 60
+            y = addWideButton("Load more comments", startY: y, width: w, into: sv,
+                              action: #selector(loadMoreCommentsTapped))
         }
         return y
     }
 
+    private func addWideButton(_ title: String, startY: CGFloat, width w: CGFloat,
+                               into sv: UIView, action: Selector) -> CGFloat {
+        let padding: CGFloat = 12
+        let b = UIButton(type: .custom)
+        b.frame = CGRect(x: padding, y: startY + 8, width: w - padding * 2, height: 44)
+        b.setTitle(title, for: .normal)
+        b.setTitleColor(.white, for: .normal)
+        b.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
+        b.backgroundColor = UIColor(red: 0.20, green: 0.20, blue: 0.20, alpha: 1)
+        b.layer.cornerRadius = 6
+        b.addTarget(self, action: action, for: .touchUpInside)
+        sv.addSubview(b)
+        return startY + 60
+    }
+
+    private func addReplyButton(_ title: String, startY: CGFloat, width w: CGFloat,
+                                into sv: UIView, index: Int) -> CGFloat {
+        let b = UIButton(type: .custom)
+        b.frame = CGRect(x: 48, y: startY, width: w - 60, height: 28)
+        b.setTitle(title, for: .normal)
+        b.setTitleColor(Theme.accent, for: .normal)
+        b.titleLabel?.font = UIFont.boldSystemFont(ofSize: 11)
+        b.contentHorizontalAlignment = .left
+        b.tag = index
+        b.addTarget(self, action: #selector(moreRepliesTapped(_:)), for: .touchUpInside)
+        sv.addSubview(b)
+        return startY + 30
+    }
+
+    private static let commentBodyFont = UIFont.systemFont(ofSize: 13)
+
+    // Wrapping a long comment is the single most expensive thing in the list, so each body
+    // is measured once per width. Replies are narrower than top-level rows, hence the flag
+    // in the key. Cleared on rotation and when the VC swaps video.
+    private func commentBodyHeight(_ c: Comment, indented: Bool,
+                                   width: CGFloat, font: UIFont) -> CGFloat {
+        let key = indented ? c.id + "|r" : c.id
+        if let h = commentBodyHeights[key] { return h }
+        let h = heightForText(c.text, font: font, width: width, maxLines: 0)
+        commentBodyHeights[key] = h
+        return h
+    }
+
     // Self-sizing comment row: header line, body (full text), then likes + a replies toggle.
-    private func makeCommentRow(_ c: Comment, index: Int, width w: CGFloat, indented: Bool) -> UIView {
+    // topLevelIndex is the row's index in `comments` — nil marks a reply, which is indented
+    // and never gets a replies toggle of its own (replies do not nest further).
+    private func makeCommentRow(_ c: Comment, width w: CGFloat, topLevelIndex: Int?) -> UIView {
+        let indented = topLevelIndex == nil
         let padding: CGFloat = 12
         let x = padding + (indented ? 24 : 0)
         let bodyW = w - x - padding
@@ -1019,7 +1147,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         if c.isPinned {
             let pin = UILabel()
             pin.backgroundColor = .clear
-            pin.textColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+            pin.textColor = Theme.accent
             pin.font = UIFont.boldSystemFont(ofSize: 10)
             pin.text = "PINNED"
             pin.frame = CGRect(x: x, y: y, width: bodyW, height: 13)
@@ -1036,8 +1164,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         row.addSubview(head)
         y += 19
 
-        let bodyFont = UIFont.systemFont(ofSize: 13)
-        let bodyH = heightForText(c.text, font: bodyFont, width: bodyW, maxLines: 0)
+        let bodyFont = VideoPlayerVC.commentBodyFont
+        let bodyH = commentBodyHeight(c, indented: indented, width: bodyW, font: bodyFont)
         let body = UILabel()
         body.backgroundColor = .clear
         body.textColor = UIColor(white: 0.92, alpha: 1)
@@ -1061,20 +1189,21 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
 
         // Replies toggle (top-level rows only — replies never nest further).
         let repliesLabel = c.repliesText
-        if index >= 0 && !repliesLabel.isEmpty {
+        let showsReplyToggle = topLevelIndex != nil && !repliesLabel.isEmpty
+        if let index = topLevelIndex, showsReplyToggle {
             let expanded = expandedReplies[c.id] != nil
             let btnX = likes.isEmpty ? x : x + 130
             let b = UIButton(type: .custom)
             b.frame = CGRect(x: btnX, y: y - 4, width: w - btnX - padding, height: 24)
             b.setTitle(expanded ? "Hide replies" : repliesLabel, for: .normal)
-            b.setTitleColor(UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1), for: .normal)
+            b.setTitleColor(Theme.accent, for: .normal)
             b.titleLabel?.font = UIFont.boldSystemFont(ofSize: 11)
             b.contentHorizontalAlignment = .left
             b.tag = index
             b.addTarget(self, action: #selector(repliesTapped(_:)), for: .touchUpInside)
             row.addSubview(b)
         }
-        if !likes.isEmpty || (index >= 0 && !repliesLabel.isEmpty) { y += 20 }
+        if !likes.isEmpty || showsReplyToggle { y += 20 }
 
         y += 6
         row.frame = CGRect(x: 0, y: 0, width: w, height: y)
@@ -1084,8 +1213,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // One-line status used by both tabs while loading / when empty, with a spinner in front
     // of the text when something is actually in flight.
     private func addPlaceholder(_ text: String, startY: CGFloat, width w: CGFloat,
-                                indent: CGFloat = 0, busy: Bool = false) -> CGFloat {
-        guard let sv = scrollView else { return startY }
+                                into sv: UIView, indent: CGFloat = 0,
+                                busy: Bool = false) -> CGFloat {
         let padding: CGFloat = 12
         var x = padding + indent
 
@@ -1094,7 +1223,6 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             spin.frame = CGRect(x: x, y: startY + 6, width: 20, height: 20)
             spin.startAnimating()
             sv.addSubview(spin)
-            tabSectionViews.append(spin)
             x += 26
         }
 
@@ -1105,7 +1233,6 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         l.text = text
         l.frame = CGRect(x: x, y: startY + 6, width: w - x - padding, height: 20)
         sv.addSubview(l)
-        tabSectionViews.append(l)
         return startY + 32
     }
 
@@ -1489,7 +1616,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         sl.minimumValue = 0
         sl.maximumValue = 1
         sl.value = 0
-        sl.minimumTrackTintColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+        sl.minimumTrackTintColor = Theme.accent
         sl.addTarget(self, action: #selector(castScrubTouchDown), for: .touchDown)
         sl.addTarget(self, action: #selector(castScrubTouchUp), for: [.touchUpInside, .touchUpOutside])
         bar.addSubview(sl)
@@ -1563,7 +1690,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         sl.minimumValue = 0
         sl.maximumValue = 1
         sl.value = 0
-        sl.minimumTrackTintColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
+        sl.minimumTrackTintColor = Theme.accent
         sl.addTarget(self, action: #selector(scrubChanged), for: .valueChanged)
         sl.addTarget(self, action: #selector(scrubTouchDown), for: .touchDown)
         sl.addTarget(self, action: #selector(scrubTouchUp), for: [.touchUpInside, .touchUpOutside])
