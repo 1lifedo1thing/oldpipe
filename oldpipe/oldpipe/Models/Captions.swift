@@ -78,6 +78,17 @@ enum Captions {
             cues.append(CaptionCue(start: start, end: start + max(dur, 0.5), text: text))
         }
         cues.sort { $0.start < $1.start }
+        // Auto-generated (ASR) tracks give every line a ROLL-UP duration that deliberately
+        // outlives the next line's start — YouTube's own player scrolls two lines at once.
+        // We draw a single line and cueIndex() keeps a cue until its end, so leaving the
+        // overlap in (3.3s on average, up to 7s) pins the caption a full line behind the
+        // audio for the whole video. Trim each end back to the next start. Human-authored
+        // tracks never overlap, so this is a no-op for them.
+        for i in 0..<max(cues.count - 1, 0) {
+            let next = cues[i + 1].start
+            guard next > cues[i].start, cues[i].end > next else { continue }
+            cues[i] = CaptionCue(start: cues[i].start, end: next, text: cues[i].text)
+        }
         return cues
     }
 
