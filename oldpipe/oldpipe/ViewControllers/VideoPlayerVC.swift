@@ -144,6 +144,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private var shareBtn: UIButton?
     private var addPlaylistBtn: UIButton?
     private var fsOverlay: UIView?
+    // Hosts action sheets while fullscreen is up on iOS 8+ (see ensureSheetWindow).
+    private var sheetWindow: UIWindow?
 
     // Playback controls (play/pause + scrubber)
     private var controlsView: UIView?
@@ -431,6 +433,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             } else {
                 // Already fullscreen — just re-orient to the new landscape side.
                 fsOverlay?.transform = CGAffineTransform(rotationAngle: angle)
+                syncSheetWindow()
             }
         } else if fsOverlay != nil {
             exitFullscreen()
@@ -483,6 +486,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             let barH: CGFloat = 40
             controlsView?.frame = CGRect(x: 0, y: overlay.bounds.height - barH, width: overlay.bounds.width, height: barH)
             layoutControls(width: overlay.bounds.width)
+            syncSheetWindow()
         }
 
         // The VC view is already below the bars (edges = []), so the scroll view fills it.
@@ -2076,13 +2080,54 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     //
     // iOS 8 rebuilt UIActionSheet on top of UIAlertController, which is presented by the view
     // controller found by walking up from the host view. fsOverlay is a bare subview of the
-    // window with no view controller above it, so from iOS 8 on, showing there is a silent
-    // no-op — the gear button did nothing in fullscreen (reported on an iPad mini 1 / 8.4.1).
-    // Hosting in `view` finds this VC, and the presented sheet gets its own container on top
-    // of the window, so the overlay no longer buries it.
+    // window with no view controller above it, so showing there is a silent no-op — the gear
+    // button did nothing at all in fullscreen (iPad mini 1 / 8.4.1). Hosting in `view` fixes
+    // that, but only halfway: a modal presentation is inserted INSIDE the presenting VC's own
+    // window hierarchy, which is still underneath fsOverlay, so the sheet opens invisibly and
+    // only shows up once fullscreen is exited. In fullscreen it therefore goes into a window
+    // of its own, one level above the app window.
     private var sheetHost: UIView {
-        if (UIDevice.current.systemVersion as NSString).floatValue >= 8.0 { return view }
+        if (UIDevice.current.systemVersion as NSString).floatValue >= 8.0 {
+            if fsOverlay != nil, let host = sheetWindow?.rootViewController?.view { return host }
+            return view
+        }
         return fsOverlay ?? view
+    }
+
+    // The sheet window needs a root view controller (that is what the iOS 8 shim presents
+    // from) and the overlay's exact geometry, so a sheet shown in it lands over the video and
+    // reads the right way up in landscape — the app window itself never rotates on iPhone.
+    private func ensureSheetWindow() {
+        guard (UIDevice.current.systemVersion as NSString).floatValue >= 8.0 else { return }
+        if sheetWindow == nil {
+            let w = PassthroughWindow()
+            w.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.normal.rawValue + 1)
+            w.backgroundColor = .clear
+            let host = UIViewController()
+            host.view.backgroundColor = .clear
+            w.rootViewController = host
+            w.isHidden = false
+            sheetWindow = w
+        }
+        syncSheetWindow()
+    }
+
+    // Keep the window glued to the overlay as the device turns between landscape sides.
+    private func syncSheetWindow() {
+        guard let w = sheetWindow, let overlay = fsOverlay else { return }
+        let screen = UIScreen.main.bounds
+        w.bounds = overlay.bounds
+        w.center = CGPoint(x: screen.midX, y: screen.midY)
+        w.transform = overlay.transform
+        w.rootViewController?.view.frame = w.bounds
+    }
+
+    private func teardownSheetWindow() {
+        guard let w = sheetWindow else { return }
+        w.rootViewController?.dismiss(animated: false, completion: nil)
+        w.isHidden = true
+        w.rootViewController = nil
+        sheetWindow = nil
     }
 
     // MARK: - Quality
@@ -2649,6 +2694,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
 
         // Captions ride into the overlay too (host rule = fsOverlay ?? videoContainer).
         if captionPlate != nil { ensureCaptionPlate() }
+
+        ensureSheetWindow()
     }
 
     private func setFSStatusBar(hidden: Bool) {
@@ -2688,6 +2735,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         }
         overlay.removeFromSuperview()
         fsOverlay = nil
+        teardownSheetWindow()
         // fsOverlay is now nil, so the host resolves back to videoContainer.
         if captionPlate != nil { ensureCaptionPlate() }
     }
@@ -2728,6 +2776,18 @@ private class CommentRowView: UIView {
 
     @objc func copyComment(_ sender: Any?) {
         UIPasteboard.general.string = copyText
+    }
+}
+
+// Covers the whole screen, so without this every tap in fullscreen would be swallowed and
+// the controls bar would go dead. A hit on the root view (nothing presented) is declined and
+// the touch falls through to the app window; once a sheet is up, the hit lands on the sheet's
+// own views instead and is kept.
+private class PassthroughWindow: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        if hit === self || hit === rootViewController?.view { return nil }
+        return hit
     }
 }
 
