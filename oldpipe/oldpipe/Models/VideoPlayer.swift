@@ -64,6 +64,14 @@ class VideoPlayer {
     // video is loaded; deliberately kept across the reload a recovery drives.
     var activeItag: Int?
 
+    // The caption track the viewer turned on, here for the same reason as activeItag: tapping
+    // Back destroys the player VC while playback carries on in the mini bar, so a selection
+    // owned by the VC quietly switched itself off on the way back in. The parsed cues ride
+    // along so re-entering costs no refetch and shows a line immediately. Cleared when a
+    // *different* video is loaded.
+    var activeCaptionKey: String?
+    var activeCaptionCues: [CaptionCue] = []
+
     enum RecoveryState {
         case reconnecting(attempt: Int)
         case recovered
@@ -140,8 +148,13 @@ class VideoPlayer {
         // has to survive the reload it is driving, or every attempt would look like the first.
         // Loading a *different* video supersedes a recovery outright.
         if recovering, !isSameVideo { cancelRecovery() }
-        // A quality chosen in the player UI belongs to the video it was chosen for.
-        if !isSameVideo { activeItag = nil }
+        // A quality or caption track chosen in the player UI belongs to the video it was
+        // chosen for.
+        if !isSameVideo {
+            activeItag = nil
+            activeCaptionKey = nil
+            activeCaptionCues = []
+        }
         wantsPlayback = false
         lastTickSeconds = -1
         stalledTicks = 0

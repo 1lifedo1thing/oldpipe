@@ -14,6 +14,10 @@ struct CaptionTrack {
     let languageCode: String
     let name: String        // display label, e.g. "English (auto-generated)"
     let isASR: Bool         // auto-generated (kind == "asr")
+
+    // Identity of a track across two fetches of the same video's list. Not baseUrl — that
+    // one carries signed, expiring query params and differs every time.
+    var key: String { return languageCode + (isASR ? "|asr" : "") }
 }
 
 struct CaptionCue {

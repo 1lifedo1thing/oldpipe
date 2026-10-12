@@ -1982,6 +1982,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
                 self.descriptionText = desc
                 self.relayout()
             }
+            self.restoreCaptionSelection()
             completion?()
         }
     }
@@ -2214,6 +2215,25 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         sheet.show(in: sheetHost)
     }
 
+    // Re-apply the track held by the singleton. This VC is built from scratch every time the
+    // player is reopened (mini bar, history, a second tap on the same video), so without this
+    // the captions the viewer turned on come back off. Runs once the refetched track list is
+    // in; the cached cues are reused when they are still the right ones.
+    private func restoreCaptionSelection() {
+        guard activeCaptionIndex < 0, !captionTracks.isEmpty, sp.isActive(video.id),
+              let key = sp.activeCaptionKey,
+              let index = captionTracks.firstIndex(where: { $0.key == key }) else { return }
+        guard !sp.activeCaptionCues.isEmpty else {
+            selectCaption(index)   // picked, but the transcript never finished loading
+            return
+        }
+        activeCaptionIndex = index
+        captionCues = sp.activeCaptionCues
+        captionCueIndex = -1
+        ensureCaptionPlate()
+        startCaptionTimer()
+    }
+
     // index < 0 turns captions off; otherwise fetch + parse the track, then start ticking.
     private func selectCaption(_ index: Int) {
         captionCueIndex = -1
@@ -2222,20 +2242,26 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         guard index >= 0, index < captionTracks.count else {
             activeCaptionIndex = -1
             captionCues = []
+            sp.activeCaptionKey = nil
+            sp.activeCaptionCues = []
             stopCaptionTimer()
             return
         }
         activeCaptionIndex = index
         captionCues = []
         let track = captionTracks[index]
+        sp.activeCaptionKey = track.key
+        sp.activeCaptionCues = []
         Captions.load(track) { [weak self] cues in
             guard let self = self else { return }
             // A newer pick (or an auto-advance) may have landed while this was in flight.
             guard self.activeCaptionIndex >= 0, self.activeCaptionIndex < self.captionTracks.count,
                   self.captionTracks[self.activeCaptionIndex].baseUrl == track.baseUrl else { return }
             self.captionCues = cues
+            self.sp.activeCaptionCues = cues
             if cues.isEmpty {
                 self.activeCaptionIndex = -1
+                self.sp.activeCaptionKey = nil
                 self.stopCaptionTimer()
                 let alert = UIAlertView()
                 alert.title = "Captions"
@@ -2329,6 +2355,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // Drop all caption state (new video loaded into this VC via playlist auto-advance).
     private func resetCaptions() {
         stopCaptionTimer()
+        sp.activeCaptionKey = nil
+        sp.activeCaptionCues = []
         captionTracks = []
         captionCues = []
         activeCaptionIndex = -1
