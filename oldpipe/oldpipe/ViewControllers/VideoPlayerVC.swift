@@ -58,6 +58,12 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // automatic one) rather than being derived, because the playing stream is owned by the
     // singleton and a downloaded copy has no itag at all. Reset per video.
     private var activeQualityLabel = "Auto"
+    // The itag behind that label (StreamTiers.muxed360 for the direct 360p row). Once a tier is
+    // in effect for this video, it wins over Settings > Default Video Quality — retrying after a
+    // dropped stream, or picking 360p by hand with a default of 720p, must not bounce back to
+    // the default. Mirrored onto the singleton so its reconnect watchdog re-resolves the same
+    // tier. nil = nothing has played yet. Reset per video.
+    private var activeItag: Int?
 
     // Captions. The track list arrives with the streams (same player response); cues are
     // fetched only when the user picks a track. Rendered into captionPlate/captionLabel by
@@ -344,6 +350,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         commentBodyHeights.removeAll()
         tabContentDirty = true
         activeQualityLabel = "Auto"   // the next video picks its own tier
+        activeItag = nil
         resetCaptions()   // the new video has its own track list (refetched by loadStreams)
 
         let w = UIScreen.main.bounds.width
@@ -1421,6 +1428,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             guard buttonIndex != actionSheet.cancelButtonIndex else { return }
             if qualitySheetMuxedRow, buttonIndex == 0 {
                 activeQualityLabel = "360p"
+                // Set before playTapped(), which otherwise sees the tier being switched AWAY
+                // from and replays that instead.
+                activeItag = StreamTiers.muxed360
                 playTapped()   // the default 360p path (offline copy / direct / proxied)
             } else {
                 let idx = qualitySheetMuxedRow ? buttonIndex - 1 : buttonIndex
@@ -2275,6 +2285,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             return
         }
         activeQualityLabel = qualityLabel(vStream)
+        activeItag = vStream.itag
         playBtn?.isHidden = true
         statusLabel?.text = "Loading stream..."
         statusLabel?.isHidden = false
@@ -2307,8 +2318,18 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             return
         }
 
-        // Apply the user's default quality preference (Settings), if set and available.
-        if let preset = defaultQualityStream() {
+        // A tier already in effect for this video wins over the Settings default: this is also
+        // the path a retry takes after the watchdog gave up, and coming back at a different
+        // quality than the one being watched is exactly what the viewer notices. The muxed 360p
+        // itag falls through to the direct path below — not back into the default.
+        if let itag = activeItag {
+            if itag != StreamTiers.muxed360,
+               let s = hlsQualityOptions().first(where: { $0.itag == itag }) {
+                playHLS(s)
+                return
+            }
+        } else if let preset = defaultQualityStream() {
+            // Apply the user's default quality preference (Settings), if set and available.
             playHLS(preset)
             return
         }
@@ -2329,6 +2350,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         }
 
         activeQualityLabel = "360p"
+        activeItag = StreamTiers.muxed360
         playBtn?.isHidden = true
         statusLabel?.isHidden = false
         showSpinner()
@@ -2410,6 +2432,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             return
         }
         sp.load(video: video, url: nsurl, isLocal: false, resume: DownloadManager.position(for: video.id), artwork: thumbView?.image)
+        // After load(), which clears the field when the video changed — the singleton's
+        // reconnect watchdog re-resolves the stream and needs to know the tier it is on.
+        sp.activeItag = activeItag
         attachLayer()
         DebugLog.log("Player", "tryStream id=\(video.id) url=\(urlStr) maxTicks=\(maxTicks)")
         pollUntilReady(maxTicks: maxTicks, interval: 0.25, onReady: { [weak self] in

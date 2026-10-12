@@ -57,6 +57,13 @@ class VideoPlayer {
     // genuinely-down network time to come back before spending the last attempt.
     private static let recoveryDelays: [TimeInterval] = [2, 5, 10]
 
+    // The itag currently playing, as picked in the player UI — by hand from the quality sheet,
+    // or by the Settings default when playback started. Recovery re-resolves the stream from
+    // scratch, so without this it would re-apply the Settings default and silently drop the
+    // viewer back to the app's default quality after every blip. Cleared when a *different*
+    // video is loaded; deliberately kept across the reload a recovery drives.
+    var activeItag: Int?
+
     enum RecoveryState {
         case reconnecting(attempt: Int)
         case recovered
@@ -94,6 +101,9 @@ class VideoPlayer {
     // waits for readiness first — iOS 6 won't reliably auto-start before tracks load).
     func load(video: Video, url: URL, isLocal: Bool, resume: Double, artwork: UIImage?) {
         DebugLog.log("VideoPlayer", "load id=\(video.id) isLocal=\(isLocal) resume=\(resume) url=\(url.absoluteString)")
+        // Must be read before currentVideo is reassigned below. A recovery reloads the SAME
+        // video (quality is kept — that is the point); anything else is a new video.
+        let isSameVideo = (currentVideo?.id == video.id)
         configureAudioSession()
         // iOS 6 AVPlayer cannot replaceCurrentItem across content types (progressive MP4
         // <-> HLS): the new HLS item probes the playlist then fails with bare -11800
@@ -129,7 +139,9 @@ class VideoPlayer {
         // Watchdog state is per-load, except the attempt counter during a recovery — that one
         // has to survive the reload it is driving, or every attempt would look like the first.
         // Loading a *different* video supersedes a recovery outright.
-        if recovering, currentVideo?.id != video.id { cancelRecovery() }
+        if recovering, !isSameVideo { cancelRecovery() }
+        // A quality chosen in the player UI belongs to the video it was chosen for.
+        if !isSameVideo { activeItag = nil }
         wantsPlayback = false
         lastTickSeconds = -1
         stalledTicks = 0
@@ -398,7 +410,10 @@ class VideoPlayer {
         recoveryTimer = nil
         // The user may have closed, paused, or switched video during the backoff.
         guard recovering, currentVideo?.id == video.id else { recovering = false; return }
-        StreamResolver.resolve(video) { [weak self] resolved in
+        // Re-resolve at the quality that was actually playing, not the Settings default:
+        // reconnecting must be invisible to the viewer, and switching them back down (or up)
+        // mid-video is exactly what they notice.
+        StreamResolver.resolve(video, preferredItag: activeItag) { [weak self] resolved in
             guard let self = self else { return }
             guard self.recovering, self.currentVideo?.id == video.id else {
                 self.recovering = false

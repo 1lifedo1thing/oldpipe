@@ -97,6 +97,14 @@ final class StreamResolver {
         return nil
     }
 
+    // The transmuxable tier matching an itag that is already playing (see VideoPlayer.activeItag).
+    // Returns nil for the muxed 360p itag — that one is not an HLS tier and is reached through
+    // pickPreferred instead — and when the tier is absent from this response.
+    private static func tierStream(_ streams: [VideoStream], itag: Int) -> VideoStream? {
+        guard itag != StreamTiers.muxed360, audioStreamForHLS(streams) != nil else { return nil }
+        return streams.first { $0.itag == itag && $0.indexEnd > 0 && $0.mimeType.contains("avc1") }
+    }
+
     // Wraps a chosen HLS video stream + its audio track into a local StreamProxy transmux URL.
     // Returns nil if the audio track is missing or the proxy couldn't build a route.
     private static func hlsResolvedStream(_ vStream: VideoStream, _ streams: [VideoStream]) -> ResolvedStream? {
@@ -108,12 +116,15 @@ final class StreamResolver {
     }
 
     // Resolve a video to a playable URL. A completed offline download takes priority (no
-    // network); otherwise streams are fetched via innertube. The Default Video Quality
-    // preference is applied first (via the local HLS transmux proxy); if unset/unavailable,
-    // the preferred 360p format is picked and either the direct googlevideo URL (iOS 7+) or a
-    // local StreamProxy URL (iOS 6) is returned. completion fires on the main thread (getStreams
-    // already hops to main); its argument is nil when nothing playable could be resolved.
-    static func resolve(_ video: Video, completion: @escaping (ResolvedStream?) -> Void) {
+    // network); otherwise streams are fetched via innertube. `preferredItag` is the tier
+    // already playing (a mid-playback reconnect — it wins, so the quality doesn't change under
+    // the viewer); with none, the Default Video Quality preference is applied (via the local
+    // HLS transmux proxy); if that is unset/unavailable, the preferred 360p format is picked
+    // and either the direct googlevideo URL (iOS 7+) or a local StreamProxy URL (iOS 6) is
+    // returned. completion fires on the main thread (getStreams already hops to main); its
+    // argument is nil when nothing playable could be resolved.
+    static func resolve(_ video: Video, preferredItag: Int? = nil,
+                        completion: @escaping (ResolvedStream?) -> Void) {
         if DownloadManager.isDownloaded(video.id) {
             let url = URL(fileURLWithPath: DownloadManager.filePath(for: video.id))
             DebugLog.log("StreamResolver", "resolve id=\(video.id) -> local download")
@@ -121,7 +132,16 @@ final class StreamResolver {
             return
         }
         YoutubeAPI.getStreams(videoId: video.id) { streams, _, _, _, _ in
-            if let vStream = defaultQualityStream(streams), let r = hlsResolvedStream(vStream, streams) {
+            if let itag = preferredItag {
+                // An explicit tier replaces the Settings default outright — including when it
+                // is the muxed 360p itag, where falling through must NOT re-apply a default
+                // that would bump the viewer back up to 720p/1080p.
+                if let v = tierStream(streams, itag: itag), let r = hlsResolvedStream(v, streams) {
+                    DebugLog.log("StreamResolver", "resolve id=\(video.id) -> HLS transmux itag=\(itag) (active quality)")
+                    completion(r)
+                    return
+                }
+            } else if let vStream = defaultQualityStream(streams), let r = hlsResolvedStream(vStream, streams) {
                 DebugLog.log("StreamResolver", "resolve id=\(video.id) -> HLS transmux itag=\(vStream.itag)")
                 completion(r)
                 return
