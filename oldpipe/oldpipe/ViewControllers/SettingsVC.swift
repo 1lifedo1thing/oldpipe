@@ -17,6 +17,7 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
     private var debugCountLabel: UILabel!
     private var copyBtn: UIButton?
     private var qualityBtn: UIButton?
+    private var captionSizeBtn: UIButton?
     private var copyDebugBtn: UIButton?
     private var didSetupUI = false
     private var loadingSpinner: UIActivityIndicatorView?
@@ -132,6 +133,15 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         qBtn.addTarget(self, action: #selector(qualityTapped), for: .touchUpInside)
         scrollView.addSubview(qBtn)
         qualityBtn = qBtn
+        y += 44 + 12
+
+        y = addSubtitle("Size of the closed-caption text during playback. Auto scales it with the size of the video on screen.",
+                        at: y, width: contentW, pad: pad)
+
+        let cBtn = makeButton("Caption Size: \(AppSettings.captionSizeLabel())", at: y, width: contentW, pad: pad, accent: false)
+        cBtn.addTarget(self, action: #selector(captionSizeTapped), for: .touchUpInside)
+        scrollView.addSubview(cBtn)
+        captionSizeBtn = cBtn
         y += 44 + 12
 
         y += 16
@@ -291,7 +301,29 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         sheet.show(in: view)
     }
 
+    @objc private func captionSizeTapped() {
+        let sheet = UIActionSheet()
+        sheet.delegate = self
+        sheet.tag = 11
+        sheet.title = "Caption Size"
+        sheet.addButton(withTitle: "Auto")
+        sheet.addButton(withTitle: "Small")
+        sheet.addButton(withTitle: "Medium")
+        sheet.addButton(withTitle: "Large")
+        sheet.addButton(withTitle: "Extra Large")
+        sheet.addButton(withTitle: "Cancel")
+        sheet.cancelButtonIndex = 5
+        sheet.show(in: view)
+    }
+
     func actionSheet(_ actionSheet: UIActionSheet, clickedButtonAt buttonIndex: Int) {
+        if actionSheet.tag == 11 {
+            let values = ["auto", "small", "medium", "large", "xlarge"]
+            guard buttonIndex >= 0, buttonIndex < values.count else { return }
+            AppSettings.captionSize = values[buttonIndex]
+            captionSizeBtn?.setTitle("Caption Size: \(AppSettings.captionSizeLabel())", for: .normal)
+            return
+        }
         guard actionSheet.tag == 10 else { return }
         let values = ["auto", "480", "720", "1080"]
         guard buttonIndex >= 0, buttonIndex < values.count else { return }

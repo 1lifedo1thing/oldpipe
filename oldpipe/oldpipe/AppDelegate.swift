@@ -62,6 +62,42 @@ enum AppSettings {
         }
     }
 
+    private static let captionSizeKey = "caption_size"
+
+    // Caption text size. "auto" (the default) scales with the width of the view the captions
+    // are drawn in — the inline video container, or the whole screen in fullscreen — because
+    // a flat point size that reads fine on a 320pt iPhone is tiny on an iPad. The rest pin it
+    // to a fixed size. String-backed for the same reason as defaultQuality.
+    static var captionSize: String {
+        get { UserDefaults.standard.string(forKey: captionSizeKey) ?? "auto" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: captionSizeKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+
+    // hostWidth is only consulted by "auto". Clamped so a phone in portrait stays legible
+    // and an iPad in fullscreen doesn't end up with captions covering the picture.
+    static func captionFontSize(hostWidth: CGFloat) -> CGFloat {
+        switch captionSize {
+        case "small": return 12
+        case "medium": return 14
+        case "large": return 18
+        case "xlarge": return 22
+        default: return min(28, max(12, floor(hostWidth * 0.035)))
+        }
+    }
+
+    static func captionSizeLabel() -> String {
+        switch captionSize {
+        case "small": return "Small"
+        case "medium": return "Medium"
+        case "large": return "Large"
+        case "xlarge": return "Extra Large"
+        default: return "Auto"
+        }
+    }
+
     private static let debugLoggingKey = "debug_logging_enabled"
 
     // Off by default. When on, DebugLog.log(_:_:) records breadcrumbs through the playback

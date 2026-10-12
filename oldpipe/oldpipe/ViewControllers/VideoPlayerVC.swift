@@ -2266,7 +2266,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             let lbl = UILabel()
             lbl.backgroundColor = .clear     // iOS 6 defaults UILabel backgrounds to WHITE
             lbl.textColor = .white
-            lbl.font = UIFont.boldSystemFont(ofSize: 14)
+            lbl.font = UIFont.boldSystemFont(ofSize: AppSettings.captionFontSize(hostWidth: host.bounds.width))
             lbl.textAlignment = .center
             lbl.numberOfLines = 3
             plate.addSubview(lbl)
@@ -2285,6 +2285,11 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
               let host = fsOverlay ?? videoContainer else { return }
         let text = lbl.text ?? ""
         guard !text.isEmpty, castSession == nil else { plate.isHidden = true; return }
+        // Re-read the setting here rather than only at creation: the plate outlives a trip to
+        // Settings, and under "auto" the size also has to follow the host (entering fullscreen
+        // triples the width). Assigning a font forces a label relayout, hence the comparison.
+        let fontSize = AppSettings.captionFontSize(hostWidth: host.bounds.width)
+        if lbl.font.pointSize != fontSize { lbl.font = UIFont.boldSystemFont(ofSize: fontSize) }
         let maxW = max(host.bounds.width - 24, 40)
         let size = lbl.sizeThatFits(CGSize(width: maxW, height: 200))
         let w = min(maxW, ceil(size.width)) + 12
