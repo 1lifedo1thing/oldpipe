@@ -868,6 +868,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             tabContentDirty = true
         }
         if tabContentDirty {
+            UIMenuController.shared.setMenuVisible(false, animated: false)
             for v in container.subviews { v.removeFromSuperview() }
             let h = buildTabContent(width: w, into: container)
             container.frame = CGRect(x: 0, y: startY, width: w, height: h)
@@ -1126,6 +1127,18 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         return startY + 30
     }
 
+    // A UILabel cannot select text, and one UITextView per comment would mean dozens of
+    // UIWebDocumentViews on iOS 6, so a long press copies the whole comment body instead.
+    @objc private func commentLongPressed(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began, let row = g.view as? CommentRowView,
+              !row.copyText.isEmpty, row.becomeFirstResponder() else { return }
+        let menu = UIMenuController.shared
+        menu.menuItems = [UIMenuItem(title: "Copy comment",
+                                     action: #selector(CommentRowView.copyComment(_:)))]
+        menu.setTargetRect(row.bounds, in: row)
+        menu.setMenuVisible(true, animated: true)
+    }
+
     private static let commentBodyFont = UIFont.systemFont(ofSize: 13)
 
     // Wrapping a long comment is the single most expensive thing in the list, so each body
@@ -1148,7 +1161,10 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let padding: CGFloat = 12
         let x = padding + (indented ? 24 : 0)
         let bodyW = w - x - padding
-        let row = UIView()
+        let row = CommentRowView()
+        row.copyText = c.text
+        row.addGestureRecognizer(UILongPressGestureRecognizer(
+            target: self, action: #selector(commentLongPressed(_:))))
         var y: CGFloat = 8
 
         if c.isPinned {
@@ -2698,6 +2714,23 @@ private class BlockTarget: NSObject {
 // left third seeks back, on the right third seeks forward; single taps and center double
 // taps fall through to onSingleTap (toggle controls). A single tap is deferred ~0.28s so a
 // following second tap can cancel it (via UITouch.tapCount, iOS 2+).
+// UIMenuController needs a first responder to hang its item on, so the comment row is one.
+// The action is deliberately not `copy:` — a custom selector keeps the item from showing up
+// on unrelated responders and sidesteps overriding UIResponder's own edit actions.
+private class CommentRowView: UIView {
+    var copyText = ""
+
+    override var canBecomeFirstResponder: Bool { return true }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        return action == #selector(CommentRowView.copyComment(_:))
+    }
+
+    @objc func copyComment(_ sender: Any?) {
+        UIPasteboard.general.string = copyText
+    }
+}
+
 private class SeekTapView: UIView {
     var onSingleTap: (() -> Void)?
     var onSeekBackward: (() -> Void)?
