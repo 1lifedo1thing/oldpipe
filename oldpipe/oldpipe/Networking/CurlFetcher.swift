@@ -107,14 +107,48 @@ class CurlFetcher {
 
     // GET request. priority: true routes through the high-priority lane (preempts the
     // background feed), same as postJSON — used for user-initiated GETs like captions.
+    //
+    // Returns the fetcher as a cancellation handle. Calling cancel() on it before the work
+    // closure reaches the front of the gate means NO socket is ever opened — which is the
+    // point: scrolling a list away used to leave its thumbnail GETs queued ahead of the
+    // thumbnails of the screen you just pushed, behind a 2-wide semaphore.
+    @discardableResult
     static func fetchData(url: String, timeout: Int = 30, priority: Bool = false,
-                          completion: @escaping (Data?) -> Void) {
+                          completion: @escaping (Data?) -> Void) -> CurlFetcher {
         let fetcher = CurlFetcher()
         retain(fetcher)
         submit(highPriority: priority) {
+            // Cancelled while queued → skip the transfer entirely. submit() still signals
+            // the slot after this closure returns, so the accounting stays balanced.
+            if fetcher.isCancelled {
+                DispatchQueue.main.async { release(fetcher) }
+                return
+            }
             let data = fetcher.syncFetchData(url: url, timeout: timeout)
-            DispatchQueue.main.async { release(fetcher); completion(data) }
+            DispatchQueue.main.async {
+                release(fetcher)
+                if fetcher.isCancelled { return }
+                completion(data)
+            }
         }
+        return fetcher
+    }
+
+    // MARK: - Cancellation
+
+    // Guarded by the same objc_sync lock as `active` — cancel() is called from the main
+    // thread while the flag is read on a curl worker thread.
+    private var cancelled = false
+
+    func cancel() {
+        objc_sync_enter(CurlFetcher.self); cancelled = true; objc_sync_exit(CurlFetcher.self)
+    }
+
+    private var isCancelled: Bool {
+        objc_sync_enter(CurlFetcher.self)
+        let c = cancelled
+        objc_sync_exit(CurlFetcher.self)
+        return c
     }
 
     // POST JSON request with custom headers

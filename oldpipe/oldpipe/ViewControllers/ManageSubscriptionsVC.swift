@@ -26,6 +26,7 @@ class ManageSubscriptionsVC: UIViewController, UITableViewDataSource, UITableVie
     private var feedItem: UIBarButtonItem!
 
     private let bg = UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
+    private let accent = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
     private let pillBarH: CGFloat = 44
 
     // Pill tags: 0 = All, 1...n = groups[tag - 1], newGroupPillTag = "+".
@@ -175,7 +176,7 @@ class ManageSubscriptionsVC: UIViewController, UITableViewDataSource, UITableVie
         let pw = max(34, b.bounds.width + 24)
         b.frame = CGRect(x: x, y: 7, width: pw, height: 30)
         b.setTitleColor(active ? .white : UIColor(white: 0.7, alpha: 1), for: .normal)
-        b.backgroundColor = active ? Theme.accent : UIColor(white: 0.18, alpha: 1)
+        b.backgroundColor = active ? accent : UIColor(white: 0.18, alpha: 1)
         b.layer.cornerRadius = 15   // no clipsToBounds — avoids off-screen rendering
         b.tag = tag
         b.addTarget(self, action: #selector(pillTapped(_:)), for: .touchUpInside)
@@ -443,7 +444,7 @@ class ChannelGroupsVC: UIViewController, UITableViewDataSource, UITableViewDeleg
 
         if indexPath.row == groups.count {
             cell.textLabel?.text = "New Group..."
-            cell.textLabel?.textColor = Theme.accent
+            cell.textLabel?.textColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
             cell.accessoryType = .none
         } else {
             let g = groups[indexPath.row]
@@ -503,9 +504,9 @@ class ChannelGroupsVC: UIViewController, UITableViewDataSource, UITableViewDeleg
 }
 
 // MARK: - ChannelCell
-// Circular avatar (AsyncImageView, with its own loadingURL reuse guard) + channel name.
-// Using a dedicated AsyncImageView — not the cell's built-in imageView + the unguarded static
-// loadCell — is what keeps the right avatar on the right row while scrolling/reusing.
+// Circular avatar (AsyncImageView, which cancels its own in-flight request on reload) +
+// channel name. Using a dedicated AsyncImageView — not the cell's built-in imageView plus
+// the static loadCell — is what keeps the right avatar on the right row while reusing.
 
 private class ChannelCell: UITableViewCell {
 

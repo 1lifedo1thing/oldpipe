@@ -157,8 +157,10 @@ class DownloadsVC: UIViewController, UITableViewDataSource, UITableViewDelegate 
         cell.imageView?.layer.cornerRadius = 4
         cell.imageView?.clipsToBounds = true
         cell.playedFraction = playedFrac[video.id] ?? 0
-        AsyncImageView.loadCell(url: video.thumbnailURL) { [weak cell] img in
+        AsyncImageView.cancel(cell.thumbTicket)
+        cell.thumbTicket = AsyncImageView.loadCell(url: video.thumbnailURL) { [weak cell] img in
             guard let cell = cell else { return }
+            cell.thumbTicket = nil
             cell.imageView?.image = img
             cell.setNeedsLayout()
         }
@@ -229,6 +231,11 @@ private class DownloadCell: UITableViewCell {
 
     var playedFraction: CGFloat = 0 { didSet { setNeedsLayout() } }
 
+    // This cell draws into the built-in UITableViewCell.imageView (not an AsyncImageView),
+    // so it holds the request ticket itself and withdraws it on reuse — otherwise a fast
+    // scroll leaves every passed-over thumbnail still queued on the curl gate.
+    var thumbTicket: AsyncImageView.ImageRequestTicket?
+
     private let progressTrack = UIView()
     private let progressFill = UIView()
 
@@ -236,12 +243,20 @@ private class DownloadCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         progressTrack.backgroundColor = UIColor(white: 0, alpha: 0.5)
         progressTrack.isHidden = true
-        progressFill.backgroundColor = Theme.accent
+        progressFill.backgroundColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
         progressTrack.addSubview(progressFill)
         imageView?.addSubview(progressTrack)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        AsyncImageView.cancel(thumbTicket)
+        thumbTicket = nil
+    }
+
+    deinit { AsyncImageView.cancel(thumbTicket) }
 
     override func layoutSubviews() {
         super.layoutSubviews()

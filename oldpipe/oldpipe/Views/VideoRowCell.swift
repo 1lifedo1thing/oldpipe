@@ -9,11 +9,14 @@ class VideoRowCell: UITableViewCell {
     static let reuseId = "VideoRowCell"
     static let rowHeight: CGFloat = 80
 
-    private let thumb = UIImageView()
+    // AsyncImageView (not a bare UIImageView) so that reusing this cell CANCELS the
+    // outgoing thumbnail request instead of just discarding its result — see
+    // prepareForReuse. progressTrack is still added as a subview of it, which is fine:
+    // AsyncImageView is a UIImageView subclass.
+    private let thumb = AsyncImageView()
     private let durationLabel = UILabel()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private var currentURL = ""
 
     // Watched-progress bar (red fill over a dark track) pinned to the thumbnail's bottom
     // edge — hidden by default (fraction 0), so only screens that set it (History) show it.
@@ -55,7 +58,7 @@ class VideoRowCell: UITableViewCell {
 
         progressTrack.backgroundColor = UIColor(white: 0, alpha: 0.5)
         progressTrack.isHidden = true
-        progressFill.backgroundColor = Theme.accent
+        progressFill.backgroundColor = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
         progressTrack.addSubview(progressFill)
         thumb.addSubview(progressTrack)
 
@@ -79,13 +82,15 @@ class VideoRowCell: UITableViewCell {
             durationLabel.text = "  \(video.durationText)  "
         }
 
+        // load() cancels whatever this cell was previously fetching and clears the image,
+        // so no manual stale-URL guard is needed any more.
+        thumb.load(url: video.thumbnailURL)
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        thumb.cancel()
         thumb.image = nil
-        currentURL = video.thumbnailURL
-        let url = video.thumbnailURL
-        AsyncImageView.loadCell(url: url) { [weak self] img in
-            guard let self = self, self.currentURL == url else { return }
-            self.thumb.image = img
-        }
     }
 
     override func layoutSubviews() {

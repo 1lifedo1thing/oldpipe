@@ -32,54 +32,134 @@ class AsyncImageView: UIImageView {
     // MARK: - Decode queue (serial — UIGraphicsBeginImageContextWithOptions unsafe concurrent on iOS 6)
     private static let decodeQueue = DispatchQueue(label: "com.oldpipe.imagedecode")
 
+    // MARK: - In-flight registry
+    // One pipeline per URL, shared by every view that asks for it (two cells showing the
+    // same thumbnail cost one transfer, not two). When the last waiter cancels, the
+    // underlying CurlFetcher is cancelled too — that is what stops an abandoned screen's
+    // thumbnails from occupying the 2-wide curl gate ahead of the screen you just opened.
+    //
+    // Touched ONLY on the main thread (same invariant as DownloadManager.inFlight), so no
+    // lock: every entry/exit below is either already on main or hops to main first.
+
+    private final class ImageRequest {
+        var token: CurlFetcher?
+        var waiters: [Int: (UIImage) -> Void] = [:]
+        var nextWaiterId = 0
+    }
+
+    // Opaque handle a caller keeps so it can withdraw its own waiter later.
+    final class ImageRequestTicket {
+        fileprivate let url: String
+        fileprivate let waiterId: Int
+        fileprivate init(url: String, waiterId: Int) { self.url = url; self.waiterId = waiterId }
+    }
+
+    private static var inflight: [String: ImageRequest] = [:]
+
     // MARK: - Instance state
-    private var loadingURL: String?
+    private var ticket: ImageRequestTicket?
 
     // MARK: - Load into self
 
     func load(url: String) {
+        // Drop any previous request on THIS view first — cell reuse, or the mini bar
+        // switching tracks, would otherwise leave the old transfer running.
+        cancel()
         if let cached = AsyncImageView.cache.object(forKey: url as NSString) {
             image = cached; return
         }
-        loadingURL = url
         image = nil
-        let capturedURL = url
-        AsyncImageView.fetch(url: url) { [weak self] img in
-            guard let self = self, self.loadingURL == capturedURL else { return }
+        ticket = AsyncImageView.fetch(url: url) { [weak self] img in
+            guard let self = self else { return }
+            self.ticket = nil
             self.image = img
         }
     }
 
-    func cancel() { loadingURL = nil }
+    func cancel() {
+        AsyncImageView.cancel(ticket)
+        ticket = nil
+    }
+
+    // Views that are simply thrown away (VideoPlayerVC rebuilds its related rows from
+    // scratch on every relayout) never get a cancel() call. The registry only holds a
+    // [weak self] closure, so it does not retain the view and this always fires.
+    deinit { AsyncImageView.cancel(ticket) }
 
     // MARK: - Load for table/collection cell
+    // For cells whose image view isn't an AsyncImageView (UITableViewCell.imageView).
+    // Store the returned ticket on the cell and cancel it in prepareForReuse.
 
-    static func loadCell(url: String, completion: @escaping (UIImage) -> Void) {
-        if let cached = cache.object(forKey: url as NSString) { completion(cached); return }
-        fetch(url: url, completion: completion)
+    @discardableResult
+    static func loadCell(url: String, completion: @escaping (UIImage) -> Void) -> ImageRequestTicket? {
+        if let cached = cache.object(forKey: url as NSString) { completion(cached); return nil }
+        return fetch(url: url, completion: completion)
+    }
+
+    static func cancel(_ ticket: ImageRequestTicket?) {
+        guard let t = ticket, let req = inflight[t.url] else { return }
+        req.waiters.removeValue(forKey: t.waiterId)
+        guard req.waiters.isEmpty else { return }   // another view still wants this image
+        req.token?.cancel()
+        inflight.removeValue(forKey: t.url)
     }
 
     // MARK: - Shared pipeline: disk → network → decode → cache
 
-    private static func fetch(url: String, completion: @escaping (UIImage) -> Void) {
+    private static func fetch(url: String, completion: @escaping (UIImage) -> Void) -> ImageRequestTicket? {
+        // Join the pipeline already running for this URL.
+        if let existing = inflight[url] {
+            let id = existing.nextWaiterId
+            existing.nextWaiterId += 1
+            existing.waiters[id] = completion
+            return ImageRequestTicket(url: url, waiterId: id)
+        }
+
+        // Register BEFORE hopping to decodeQueue, otherwise two cells asking for the same
+        // URL in the same run loop pass both miss and both open a socket.
+        let req = ImageRequest()
+        req.waiters[0] = completion
+        req.nextWaiterId = 1
+        inflight[url] = req
+
         let path = diskPath(for: url)
         decodeQueue.async {
             if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
                let img = safeDecode(data) {
                 cache.setObject(img, forKey: url as NSString, cost: bitmapCost(img))
-                DispatchQueue.main.async { completion(img) }
+                DispatchQueue.main.async { finish(req, url: url, image: img) }
                 return
             }
-            CurlFetcher.fetchData(url: url, timeout: 15) { data in
-                guard let data = data else { return }
-                AsyncImageView.decodeQueue.async {
-                    guard let img = safeDecode(data) else { return }
-                    try? data.write(to: URL(fileURLWithPath: path), options: .atomicWrite)
-                    cache.setObject(img, forKey: url as NSString, cost: bitmapCost(img))
-                    DispatchQueue.main.async { completion(img) }
+            DispatchQueue.main.async {
+                // Cancelled while the disk read was queued → don't open a socket at all.
+                guard inflight[url] === req else { return }
+                req.token = CurlFetcher.fetchData(url: url, timeout: 15) { data in
+                    guard let data = data else { finish(req, url: url, image: nil); return }
+                    decodeQueue.async {
+                        let img = safeDecode(data)
+                        if let img = img {
+                            try? data.write(to: URL(fileURLWithPath: path), options: .atomicWrite)
+                            cache.setObject(img, forKey: url as NSString, cost: bitmapCost(img))
+                        }
+                        // Every exit path lands here, including a decode failure —
+                        // otherwise the URL stays stuck in `inflight` forever and later
+                        // requests for it join a pipeline that will never complete.
+                        DispatchQueue.main.async { finish(req, url: url, image: img) }
+                    }
                 }
             }
         }
+        return ImageRequestTicket(url: url, waiterId: 0)
+    }
+
+    // Identity check: cancel-then-re-request for the same URL puts a NEW ImageRequest in
+    // the table. Only the current owner may clear the entry or it would strand the new
+    // request's waiters.
+    private static func finish(_ req: ImageRequest, url: String, image: UIImage?) {
+        guard inflight[url] === req else { return }
+        inflight.removeValue(forKey: url)
+        guard let image = image else { return }
+        for (_, waiter) in req.waiters { waiter(image) }
     }
 
     // MARK: - Decode helpers

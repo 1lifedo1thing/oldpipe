@@ -58,6 +58,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private var aboutLabel: UILabel!
 
     private let bg = UIColor(red: 0.07, green: 0.07, blue: 0.07, alpha: 1)
+    private let accent = UIColor(red: 0.98, green: 0.27, blue: 0.27, alpha: 1)
 
     private let navH: CGFloat = 64
     private let headerH: CGFloat = 96
@@ -167,7 +168,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         tabBar.addSubview(hair)
 
         tabIndicator = UIView(frame: CGRect(x: 0, y: tabBarH - 2, width: bw, height: 2))
-        tabIndicator.backgroundColor = Theme.accent
+        tabIndicator.backgroundColor = accent
         tabBar.addSubview(tabIndicator)
 
         // Content area frame
@@ -258,7 +259,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
 
     private func updateTabIndicator() {
         for (i, b) in tabButtons.enumerated() {
-            b.setTitleColor(i == selectedTab ? Theme.accent : UIColor(white: 0.55, alpha: 1), for: .normal)
+            b.setTitleColor(i == selectedTab ? accent : UIColor(white: 0.55, alpha: 1), for: .normal)
         }
         let bw = UIScreen.main.bounds.width / CGFloat(max(tabButtons.count, 1))
         tabIndicator.frame = CGRect(x: bw * CGFloat(selectedTab), y: tabBarH - 2, width: bw, height: 2)
@@ -276,7 +277,7 @@ class ChannelVC: UIViewController, UITableViewDataSource, UITableViewDelegate {
         } else {
             subscribeBtn.setTitle("Subscribe", for: .normal)
             subscribeBtn.setTitleColor(.white, for: .normal)
-            subscribeBtn.backgroundColor = Theme.accent
+            subscribeBtn.backgroundColor = accent
         }
     }
 
@@ -488,10 +489,10 @@ private class YTPlaylistRowCell: UITableViewCell {
 
     static let reuseId = "YTPlaylistRowCell"
 
-    private let thumb = UIImageView()
+    // AsyncImageView so reuse cancels the in-flight thumbnail request (see prepareForReuse).
+    private let thumb = AsyncImageView()
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
-    private var currentURL = ""
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -528,14 +529,16 @@ private class YTPlaylistRowCell: UITableViewCell {
         titleLabel.text = playlist.title
         countLabel.text = playlist.countText
 
+        thumb.cancel()
         thumb.image = nil
-        currentURL = playlist.thumbnailURL
-        let url = playlist.thumbnailURL
-        guard !url.isEmpty else { return }
-        AsyncImageView.loadCell(url: url) { [weak self] img in
-            guard let self = self, self.currentURL == url else { return }
-            self.thumb.image = img
-        }
+        guard !playlist.thumbnailURL.isEmpty else { return }
+        thumb.load(url: playlist.thumbnailURL)
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        thumb.cancel()
+        thumb.image = nil
     }
 
     override func layoutSubviews() {
