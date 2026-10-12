@@ -1478,7 +1478,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let cancelIdx = sheet.addButton(withTitle: "Cancel")
         sheet.cancelButtonIndex = cancelIdx
         sheet.tag = 3
-        sheet.show(in: view)
+        // Cast sits in the control bar, so this sheet can be raised from fullscreen too.
+        sheet.show(in: sheetHost)
     }
 
     private func startCasting(to device: CastDevice) {
@@ -2039,9 +2040,23 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let cancelIdx = sheet.addButton(withTitle: "Cancel")
         sheet.cancelButtonIndex = cancelIdx
         sheet.tag = 4
-        // Host in the fullscreen overlay when it's up — a sheet shown in `view` would be
-        // buried (and untappable) behind the overlay.
-        sheet.show(in: fsOverlay ?? view)
+        sheet.show(in: sheetHost)
+    }
+
+    // Host view for the player's action sheets.
+    //
+    // On iOS 6/7 a UIActionSheet is drawn as a real subview of the host, so in fullscreen it
+    // must go into fsOverlay — shown in `view` it would be buried behind the overlay.
+    //
+    // iOS 8 rebuilt UIActionSheet on top of UIAlertController, which is presented by the view
+    // controller found by walking up from the host view. fsOverlay is a bare subview of the
+    // window with no view controller above it, so from iOS 8 on, showing there is a silent
+    // no-op — the gear button did nothing in fullscreen (reported on an iPad mini 1 / 8.4.1).
+    // Hosting in `view` finds this VC, and the presented sheet gets its own container on top
+    // of the window, so the overlay no longer buries it.
+    private var sheetHost: UIView {
+        if (UIDevice.current.systemVersion as NSString).floatValue >= 8.0 { return view }
+        return fsOverlay ?? view
     }
 
     // MARK: - Quality
@@ -2063,7 +2078,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let cancelIdx = sheet.addButton(withTitle: "Cancel")
         sheet.cancelButtonIndex = cancelIdx
         sheet.tag = 7
-        sheet.show(in: fsOverlay ?? view)
+        sheet.show(in: sheetHost)
     }
 
     private func qualityLabel(_ s: VideoStream) -> String {
@@ -2102,7 +2117,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let cancelIdx = sheet.addButton(withTitle: "Cancel")
         sheet.cancelButtonIndex = cancelIdx
         sheet.tag = 6
-        sheet.show(in: fsOverlay ?? view)
+        sheet.show(in: sheetHost)
     }
 
     // MARK: - Captions
@@ -2125,7 +2140,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let cancelIdx = sheet.addButton(withTitle: "Cancel")
         sheet.cancelButtonIndex = cancelIdx
         sheet.tag = 5
-        sheet.show(in: fsOverlay ?? view)
+        sheet.show(in: sheetHost)
     }
 
     // index < 0 turns captions off; otherwise fetch + parse the track, then start ticking.
