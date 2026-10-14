@@ -272,15 +272,23 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // MARK: - Shared layer attach / detach
 
     private func attachLayer() {
-        guard let container = videoContainer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        sp.layer.frame = container.bounds
         sp.layer.videoGravity = AVLayerVideoGravity.resizeAspect
-        if let thumbLayer = thumbView?.layer {
-            container.layer.insertSublayer(sp.layer, below: thumbLayer)
-        } else {
-            container.layer.addSublayer(sp.layer)
+        if let overlay = fsOverlay {
+            // Switching quality while fullscreen rebuilds the player layer; it must go
+            // back onto the overlay, not the (hidden) inline container, or the video
+            // disappears while audio keeps playing. At index 0 so the tap-catcher,
+            // controls bar and caption plate stay in front of it.
+            sp.layer.frame = overlay.bounds
+            overlay.layer.insertSublayer(sp.layer, at: 0)
+        } else if let container = videoContainer {
+            sp.layer.frame = container.bounds
+            if let thumbLayer = thumbView?.layer {
+                container.layer.insertSublayer(sp.layer, below: thumbLayer)
+            } else {
+                container.layer.addSublayer(sp.layer)
+            }
         }
         CATransaction.commit()
     }
