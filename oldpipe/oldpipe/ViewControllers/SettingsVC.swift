@@ -17,6 +17,7 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
     private var debugCountLabel: UILabel!
     private var copyBtn: UIButton?
     private var qualityBtn: UIButton?
+    private var fpsBtn: UIButton?
     private var captionSizeBtn: UIButton?
     private var copyDebugBtn: UIButton?
     private var didSetupUI = false
@@ -133,6 +134,15 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         qBtn.addTarget(self, action: #selector(qualityTapped), for: .touchUpInside)
         scrollView.addSubview(qBtn)
         qualityBtn = qBtn
+        y += 44 + 12
+
+        y = addSubtitle("Which version to play when a video offers the same quality at both frame rates. Videos published only at 60 fps still play at 60 fps.",
+                        at: y, width: contentW, pad: pad)
+
+        let fBtn = makeButton("Frame Rate: \(AppSettings.defaultFpsLabel())", at: y, width: contentW, pad: pad, accent: false)
+        fBtn.addTarget(self, action: #selector(fpsTapped), for: .touchUpInside)
+        scrollView.addSubview(fBtn)
+        fpsBtn = fBtn
         y += 44 + 12
 
         y = addSubtitle("Size of the closed-caption text during playback. Auto scales it with the size of the video on screen.",
@@ -301,6 +311,18 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
         sheet.show(in: view)
     }
 
+    @objc private func fpsTapped() {
+        let sheet = UIActionSheet()
+        sheet.delegate = self
+        sheet.tag = 12
+        sheet.title = "Frame Rate"
+        sheet.addButton(withTitle: "30 fps")
+        sheet.addButton(withTitle: "60 fps")
+        sheet.addButton(withTitle: "Cancel")
+        sheet.cancelButtonIndex = 2
+        sheet.show(in: view)
+    }
+
     @objc private func captionSizeTapped() {
         let sheet = UIActionSheet()
         sheet.delegate = self
@@ -317,6 +339,13 @@ class SettingsVC: UIViewController, UIGestureRecognizerDelegate, UIAlertViewDele
     }
 
     func actionSheet(_ actionSheet: UIActionSheet, clickedButtonAt buttonIndex: Int) {
+        if actionSheet.tag == 12 {
+            let values = ["30", "60"]
+            guard buttonIndex >= 0, buttonIndex < values.count else { return }
+            AppSettings.defaultFps = values[buttonIndex]
+            fpsBtn?.setTitle("Frame Rate: \(AppSettings.defaultFpsLabel())", for: .normal)
+            return
+        }
         if actionSheet.tag == 11 {
             let values = ["auto", "small", "medium", "large", "xlarge"]
             guard buttonIndex >= 0, buttonIndex < values.count else { return }

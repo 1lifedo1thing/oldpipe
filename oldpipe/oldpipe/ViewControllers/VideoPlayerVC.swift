@@ -2194,8 +2194,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let order = StreamTiers.qualityOrder
         guard let startIdx = order.firstIndex(of: pref) else { return nil }
         for key in order[startIdx...] {
-            if let itag = StreamTiers.itagForQuality[key],
-               let s = opts.first(where: { $0.itag == itag }) { return s }
+            for itag in StreamTiers.itags(forQuality: key) {
+                if let s = opts.first(where: { $0.itag == itag }) { return s }
+            }
         }
         return nil
     }
@@ -2314,6 +2315,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         sheet.show(in: sheetHost)
     }
 
+    // YouTube's own qualityLabel already distinguishes the frame rate — the 60fps tiers come
+    // back as "720p60"/"1080p60", the 30fps ones as plain "720p" — so the rows need no extra
+    // marker of their own, even for a video whose ladder switches frame rate partway up.
     private func qualityLabel(_ s: VideoStream) -> String {
         return s.quality.isEmpty ? "itag \(s.itag)" : s.quality
     }

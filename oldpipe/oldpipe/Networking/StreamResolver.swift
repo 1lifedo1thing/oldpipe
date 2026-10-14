@@ -21,14 +21,26 @@ enum StreamTiers {
     static let audio = 140
     // 360p adaptive tier, offered only when a response carries no muxed format at all.
     static let base360 = 134
-    // Video-only H.264 tiers the transmuxer can serve, ascending: 480p30, 720p30, 1080p30.
-    // NOTE: 60fps uploads ship as itag 298/299 instead of 136/137, so they are still invisible
-    // to the quality sheet. That fix is now a one-line change here instead of two.
-    static let h264: [Int] = [135, 136, 137]
-    // Settings > Default Video Quality: the preference order (highest first — selection steps
-    // DOWN it looking for a tier this video actually has) and the itag each value maps to.
+    // Video-only H.264 tiers the transmuxer can serve, ascending: 480p30, 720p30, 720p60,
+    // 1080p30, 1080p60. A 60fps upload ships its high tiers as itag 298/299 INSTEAD of 136/137
+    // (YouTube drops the 30fps duplicate above 480p), so leaving those two out collapsed every
+    // 60fps video to 360p/480p in the quality sheet.
+    static let h264: [Int] = [135, 136, 298, 137, 299]
+    // Settings > Default Video Quality: the preference order, highest first — selection steps
+    // DOWN it looking for a tier this video actually has.
     static let qualityOrder = ["1080", "720", "480"]
-    static let itagForQuality: [String: Int] = ["1080": 137, "720": 136, "480": 135]
+    // The itags that can serve each quality level: the 30fps one first, then its 60fps
+    // counterpart. Read through itags(forQuality:), never directly.
+    private static let itagsForQuality: [String: [Int]] = ["1080": [137, 299], "720": [136, 298], "480": [135]]
+
+    // Both variants of a quality level, best first for the Settings > Frame Rate preference.
+    // The preference only REORDERS this list, it never filters it: a 60fps upload usually
+    // publishes no 30fps tier above 480p, so dropping the 60fps itags for a "30 fps" reader
+    // would cap those videos at 480p instead of giving them the resolution they asked for.
+    static func itags(forQuality quality: String) -> [Int] {
+        guard let tags = itagsForQuality[quality] else { return [] }
+        return AppSettings.defaultFps == "60" ? Array(tags.reversed()) : tags
+    }
 }
 
 struct ResolvedStream {
@@ -91,8 +103,9 @@ final class StreamResolver {
         let order = StreamTiers.qualityOrder
         guard let startIdx = order.firstIndex(of: pref) else { return nil }
         for key in order[startIdx...] {
-            if let itag = StreamTiers.itagForQuality[key],
-               let s = opts.first(where: { $0.itag == itag }) { return s }
+            for itag in StreamTiers.itags(forQuality: key) {
+                if let s = opts.first(where: { $0.itag == itag }) { return s }
+            }
         }
         return nil
     }

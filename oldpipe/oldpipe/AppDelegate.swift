@@ -62,6 +62,24 @@ enum AppSettings {
         }
     }
 
+    private static let defaultFpsKey = "default_fps"
+
+    // "30" (the default) or "60": which variant to take when a video publishes BOTH at the
+    // resolution being played. A tie-breaker ONLY, never a filter — most 60fps uploads carry
+    // no 30fps tier at all above 480p, so honouring this strictly would silently cap those
+    // videos at 480p. Resolution always wins over frame rate. String-backed like the above.
+    static var defaultFps: String {
+        get { UserDefaults.standard.string(forKey: defaultFpsKey) ?? "30" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultFpsKey)
+            UserDefaults.standard.synchronize()
+        }
+    }
+
+    static func defaultFpsLabel() -> String {
+        return defaultFps == "60" ? "60 fps" : "30 fps"
+    }
+
     private static let captionSizeKey = "caption_size"
 
     // Caption text size. "auto" (the default) scales with the width of the view the captions
