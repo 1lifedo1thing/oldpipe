@@ -120,3 +120,98 @@ struct VideoStream {
     // formats are video-only or audio-only and must go through the HLS transmux pipeline.
     var isProgressive: Bool { return indexEnd < 0 }
 }
+
+// A seekable point inside a video. Taken from the watch page's own chapter list when YouTube
+// publishes one (see YoutubeAPI.parseChapters), else parsed out of the description below.
+struct Chapter {
+    let title: String
+    let startSeconds: Double
+
+    // "4:05" / "1:02:30". VideoPlayerVC.timeString never carries an hours field, which reads
+    // wrong on the multi-hour videos that tend to have chapters in the first place.
+    var timeLabel: String {
+        let t = Int(startSeconds)
+        if t >= 3600 {
+            return "\(t / 3600):" + String(format: "%02d:%02d", (t % 3600) / 60, t % 60)
+        }
+        return "\(t / 60):" + String(format: "%02d", t % 60)
+    }
+
+    // Timestamp lines come in every shape there is — "0:00 Intro", "⌨️ (0:00) Intro",
+    // "[0:00] Intro", "Intro - 0:00" — so the scan is positional rather than a pattern match:
+    // find the first m:ss / h:mm:ss run on the line and treat whatever text is left over as
+    // the title. Hand-rolled rather than NSRegularExpression: a plain scan has no bridging
+    // surface on the Swift 5.1.5 runtime shipped for iOS 6.
+    static func parse(description: String) -> [Chapter] {
+        var found: [Chapter] = []
+        for line in description.components(separatedBy: "\n") {
+            if let c = parseLine(line) { found.append(c) }
+        }
+        // A lone timestamp is a reference inside a sentence ("recorded 10:30"), not a chapter
+        // list. Two or more on their own lines is what an actual list looks like.
+        guard found.count >= 2 else { return [] }
+        found.sort { $0.startSeconds < $1.startSeconds }
+        var out: [Chapter] = []
+        for c in found where out.last?.startSeconds != c.startSeconds { out.append(c) }
+        return out
+    }
+
+    private static func parseLine(_ line: String) -> Chapter? {
+        let chars = Array(line)
+        var i = 0
+        while i < chars.count {
+            guard digit(chars[i]) != nil else { i += 1; continue }
+            // Never start mid-number: "2024" and the "30" of "1:30" are not timestamps.
+            if i > 0, digit(chars[i - 1]) != nil || chars[i - 1] == ":" { i += 1; continue }
+
+            // Read colon-separated digit runs: 2 groups = m:ss, 3 = h:mm:ss.
+            var j = i
+            var groups: [(value: Int, digits: Int)] = []
+            while j < chars.count {
+                var n = 0
+                var len = 0
+                while j < chars.count, let d = digit(chars[j]) {
+                    n = n * 10 + d
+                    len += 1
+                    j += 1
+                }
+                if len == 0 { break }
+                groups.append((n, len))
+                if j < chars.count, chars[j] == ":" { j += 1; continue }
+                break
+            }
+
+            var seconds = -1.0
+            if groups.count == 2, groups[1].digits == 2, groups[1].value < 60 {
+                seconds = Double(groups[0].value * 60 + groups[1].value)
+            } else if groups.count == 3, groups[1].digits == 2, groups[1].value < 60,
+                      groups[2].digits == 2, groups[2].value < 60 {
+                seconds = Double(groups[0].value * 3600 + groups[1].value * 60 + groups[2].value)
+            }
+            if seconds < 0 {
+                i = j > i ? j : i + 1
+                continue
+            }
+
+            // The title is the rest of the line — after the stamp when there is anything
+            // there, else before it ("Intro - 0:00").
+            let after = cleanTitle(String(chars[j...]))
+            let title = after.isEmpty ? cleanTitle(String(chars[0..<i])) : after
+            return title.isEmpty ? nil : Chapter(title: title, startSeconds: seconds)
+        }
+        return nil
+    }
+
+    // Leftovers of whatever bracketed/bulleted the timestamp.
+    private static let titleTrim = CharacterSet(charactersIn: " \t-–—:•|·*>_()[]{}\u{00A0}")
+
+    private static func cleanTitle(_ s: String) -> String {
+        return s.trimmingCharacters(in: titleTrim)
+    }
+
+    private static func digit(_ c: Character) -> Int? {
+        let scalars = c.unicodeScalars
+        guard scalars.count == 1, let s = scalars.first else { return nil }
+        return (s.value >= 48 && s.value <= 57) ? Int(s.value - 48) : nil
+    }
+}

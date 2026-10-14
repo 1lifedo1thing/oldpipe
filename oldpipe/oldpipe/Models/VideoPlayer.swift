@@ -261,16 +261,32 @@ class VideoPlayer {
         updateNowPlayingInfo()
     }
 
-    // Relative skip (double-tap seek). Clamps to [0, duration]; seeking a streamed video
-    // just issues a new Range request through the proxy — same cost as the scrubber.
-    func seek(bySeconds delta: Double) {
+    // Absolute seek (chapter jump, double-tap skip). Clamps to [0, duration]; seeking a
+    // streamed video just issues a new Range request through the proxy.
+    //
+    // Seeks here are EXACT (both tolerances zero) because the caller is aiming at a specific
+    // frame. The default no-tolerance overload is kCMTimePositiveInfinity on both sides — it
+    // lets AVPlayer land wherever is cheapest, and above 360p "cheapest" is the head of the
+    // enclosing HLS segment, i.e. one whole DASH fragment (~5.6s) early. Zeroing only
+    // toleranceBefore would be worse, not better: it forbids landing early but still allows
+    // the next segment boundary, so a chapter would start up to a fragment LATE, past the
+    // content it was pointing at. The cost is decoding from the segment's keyframe up to the
+    // target, which is one segment's worth of work on an A5.
+    func seek(toSeconds t: Double) {
         guard isReady else { return }
         let dur = durationSeconds
-        var target = currentSeconds + delta
+        var target = t
         if target < 0 { target = 0 }
         if dur > 0, target > dur { target = dur }
-        player?.seek(to: CMTimeMakeWithSeconds(target, preferredTimescale: 600))
+        player?.seek(to: CMTimeMakeWithSeconds(target, preferredTimescale: 600),
+                     toleranceBefore: CMTime.zero, toleranceAfter: CMTime.zero)
         updateNowPlayingInfo()
+    }
+
+    // Relative skip (double-tap seek).
+    func seek(bySeconds delta: Double) {
+        guard isReady else { return }
+        seek(toSeconds: currentSeconds + delta)
     }
 
     var currentSeconds: Double {

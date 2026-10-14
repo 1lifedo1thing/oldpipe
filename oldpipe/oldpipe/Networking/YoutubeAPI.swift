@@ -324,23 +324,23 @@ class YoutubeAPI {
     // completion: (related videos, comments continuation token — "" when the video genuinely
     // has no comment section, nil when the request failed and nothing is known either way;
     // the caller must not treat nil as "comments are off")
-    static func getRelated(videoId: String, priority: Bool = false, completion: @escaping ([Video], String?) -> Void) {
+    static func getRelated(videoId: String, priority: Bool = false, completion: @escaping ([Video], String?, [Chapter]) -> Void) {
         let payload = body(client: webClient, extra: ["videoId": videoId])
-        guard let jsonStr = toJSON(payload) else { completion([], nil); return }
+        guard let jsonStr = toJSON(payload) else { completion([], nil, []); return }
         let url = "\(baseURL)/next?prettyPrint=false"
         CurlFetcher.postJSON(url: url, body: jsonStr, headers: jsonHeaders,
                              userAgent: webUserAgent, timeout: 30, priority: priority) { data in
-            guard let data = data else { completion([], nil); return }
+            guard let data = data else { completion([], nil, []); return }
             (priority ? interactiveParseQueue : parseQueue).async {
                 let result = parseRelated(data, excludeId: videoId)
-                DispatchQueue.main.async { completion(result.0, result.1) }
+                DispatchQueue.main.async { completion(result.0, result.1, result.2) }
             }
         }
     }
 
-    private static func parseRelated(_ data: Data, excludeId: String) -> ([Video], String?) {
+    private static func parseRelated(_ data: Data, excludeId: String) -> ([Video], String?, [Chapter]) {
         guard let root = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-            return ([], nil)
+            return ([], nil, [])
         }
         captureVisitorData(root)
         // The related panel lives under the secondaryResults column; walking just that
@@ -351,7 +351,37 @@ class YoutubeAPI {
         seen.insert(excludeId)   // never list the video we're already watching
         var results: [Video] = []
         collectVideoItems(secondary, fallbackChannelId: "", fallbackChannelName: "", seen: &seen, into: &results)
-        return (results, findCommentsToken(root))
+        return (results, findCommentsToken(root), parseChapters(root))
+    }
+
+    // Chapters are published on the watch page as the markers drawn under the scrubber, so
+    // they come back on the same call as the related videos and the comments token — no
+    // extra request. Two kinds exist: DESCRIPTION_CHAPTERS (author-written) and AUTO_CHAPTERS
+    // (generated); the authored one wins when both are offered. The same map also carries
+    // ANIMATION_ANNOTATION_MARKERS, which has no `chapters` key at all — hence the filter.
+    private static func parseChapters(_ root: [String: Any]) -> [Chapter] {
+        guard let overlay = dict(dict(root["playerOverlays"])?["playerOverlayRenderer"]),
+              let decorated = dict(dict(overlay["decoratedPlayerBarRenderer"])?["decoratedPlayerBarRenderer"]),
+              let bar = dict(dict(decorated["playerBar"])?["multiMarkersPlayerBarRenderer"]),
+              let markers = arr(bar["markersMap"]) else { return [] }
+
+        var fallback: [Chapter] = []
+        for marker in markers {
+            guard let chapters = arr(dict(marker["value"])?["chapters"]), !chapters.isEmpty else { continue }
+            var parsed: [Chapter] = []
+            for entry in chapters {
+                guard let renderer = dict(entry["chapterRenderer"]),
+                      let title = str(dict(renderer["title"])?["simpleText"]), !title.isEmpty else { continue }
+                // NSNumber, never `as? Int`: the 5.1.5 runtime returns nil for a numeric
+                // bridge cast, which would silently flatten every chapter onto 0:00.
+                let millis = (renderer["timeRangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
+                parsed.append(Chapter(title: title, startSeconds: millis / 1000))
+            }
+            if parsed.isEmpty { continue }
+            if str(marker["key"]) == "DESCRIPTION_CHAPTERS" { return parsed }
+            if fallback.isEmpty { fallback = parsed }
+        }
+        return fallback
     }
 
     // MARK: - Comments (Next endpoint)

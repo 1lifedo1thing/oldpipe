@@ -93,6 +93,14 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private var relatedVideos: [Video] = []
     private var relatedState = LoadState.idle
 
+    // Chapters, shown as tappable rows above the description. The watch-page list and the
+    // description arrive from two different calls in either order, so the authored list is
+    // kept apart from what is actually displayed and refreshChapters() re-picks a winner
+    // each time one of them lands.
+    private var apiChapters: [Chapter] = []
+    private var chapters: [Chapter] = []
+    private var chaptersExpanded = false
+
     // The tab section lives in its own container so that a description expand/collapse —
     // which only moves it down the page — costs one frame assignment instead of rebuilding
     // every comment row. Its contents are rebuilt only when the data behind them changed.
@@ -366,6 +374,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         relatedState = .idle
         descriptionText = ""
         descExpanded = false
+        apiChapters = []
+        chapters = []
+        chaptersExpanded = false
         relatedVideos = []
         detailTab = 0
         comments = []
@@ -755,10 +766,12 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private func loadRelated() {
         relatedState = .loading
         let gen = contentGen
-        YoutubeAPI.getRelated(videoId: video.id, priority: true) { [weak self] vids, cToken in
+        YoutubeAPI.getRelated(videoId: video.id, priority: true) { [weak self] vids, cToken, chaps in
             guard let self = self, gen == self.contentGen else { return }
             self.relatedState = .ready
             self.relatedVideos = Array(vids.prefix(12))
+            self.apiChapters = chaps
+            self.refreshChapters()
             if let cToken = cToken {
                 self.commentsToken = cToken
                 // No comment section on this watch page (comments off, or an age/region gate):
@@ -796,7 +809,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let padding: CGFloat = 12
         var y = contentBelowMetaY
 
-        // Description (directly under the meta line).
+        // Chapters, then the description (directly under the meta line).
+        y = buildChaptersSection(startY: y, width: w)
         y = buildDescriptionSection(startY: y, width: w)
 
         // Download button.
@@ -814,6 +828,125 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         y = layoutTabSection(startY: y, width: w)
 
         sv.contentSize = CGSize(width: w, height: y + 80)   // +80 clears the mini player bar
+    }
+
+    // The watch page's own chapter list when it has one, else the timestamps written into
+    // the description. Both are offered on plenty of videos and they usually agree; the
+    // authored list wins because its titles are already clean.
+    private func refreshChapters() {
+        chapters = apiChapters.isEmpty ? Chapter.parse(description: descriptionText) : apiChapters
+    }
+
+    @objc private func chaptersToggleTapped() {
+        chaptersExpanded = !chaptersExpanded
+        relayout()
+    }
+
+    private static let chapterRowColor = UIColor(white: 0.13, alpha: 1)
+    private static let chapterRowHighlight = UIColor(white: 0.28, alpha: 1)
+
+    @objc private func chapterRowDown(_ sender: UIButton) {
+        sender.backgroundColor = VideoPlayerVC.chapterRowHighlight
+    }
+
+    @objc private func chapterRowUp(_ sender: UIButton) {
+        sender.backgroundColor = VideoPlayerVC.chapterRowColor
+    }
+
+    @objc private func chapterTapped(_ sender: UIButton) {
+        let i = sender.tag
+        guard i >= 0, i < chapters.count else { return }
+        let target = chapters[i].startSeconds
+        if castSession != nil {
+            castSession?.seek(to: target)
+            return
+        }
+        guard sp.isActive(video.id) else { return }
+        sp.seek(toSeconds: target)
+        showControls()
+    }
+
+    // Chapter rows above the description: [time][title], the whole row tappable. Collapsed
+    // to the first few — a long tutorial can carry 70+ chapters, and one row is two labels
+    // inside a button, so showing them all by default would be the heaviest thing on the
+    // page on a 4S.
+    private func buildChaptersSection(startY: CGFloat, width w: CGFloat) -> CGFloat {
+        guard !chapters.isEmpty, let sv = scrollView else { return startY }
+        let padding: CGFloat = 12
+        let bodyW = w - padding * 2
+        var y = startY
+
+        let sep = UIView(frame: CGRect(x: 0, y: y, width: w, height: 0.5))
+        sep.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        sv.addSubview(sep); descRowViews.append(sep)
+        y += 12
+
+        let header = UILabel()
+        header.backgroundColor = .clear
+        header.textColor = UIColor(white: 0.95, alpha: 1)
+        header.font = UIFont.boldSystemFont(ofSize: 16)
+        header.text = "Chapters"
+        header.frame = CGRect(x: padding, y: y, width: bodyW, height: 22)
+        sv.addSubview(header); descRowViews.append(header)
+        y += 30
+
+        let collapsedCount = 5
+        let shown = chaptersExpanded ? chapters.count : min(collapsedCount, chapters.count)
+        let rowH: CGFloat = 34
+        let inset: CGFloat = 10
+        let timeW: CGFloat = 58
+        for i in 0..<shown {
+            let chapter = chapters[i]
+            let row = UIButton(type: .custom)
+            row.frame = CGRect(x: padding, y: y, width: bodyW, height: rowH)
+            row.tag = i
+            // A plate so the row reads as a control rather than two runs of coloured text.
+            // cornerRadius alone rounds the layer's own background — no clipsToBounds, so no
+            // off-screen render pass per row.
+            row.backgroundColor = VideoPlayerVC.chapterRowColor
+            row.layer.cornerRadius = 6
+            row.addTarget(self, action: #selector(chapterTapped(_:)), for: .touchUpInside)
+            // A .custom button has no highlight state of its own, so a tap produced no
+            // feedback at all until the video moved. Driven by colour rather than a
+            // highlighted background image: an image is drawn by a square subview and would
+            // need clipsToBounds to respect the rounded corners.
+            row.addTarget(self, action: #selector(chapterRowDown(_:)), for: [.touchDown, .touchDragEnter])
+            row.addTarget(self, action: #selector(chapterRowUp(_:)),
+                          for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+
+            let time = UILabel(frame: CGRect(x: inset, y: 0, width: timeW, height: rowH))
+            time.backgroundColor = .clear
+            time.textColor = Theme.accent
+            time.font = UIFont.boldSystemFont(ofSize: 13)
+            time.text = chapter.timeLabel
+            row.addSubview(time)
+
+            let titleX = inset + timeW
+            let title = UILabel(frame: CGRect(x: titleX, y: 0, width: bodyW - titleX - inset, height: rowH))
+            title.backgroundColor = .clear
+            title.textColor = UIColor(white: 0.8, alpha: 1)
+            title.font = UIFont.systemFont(ofSize: 13)
+            title.lineBreakMode = .byTruncatingTail
+            title.text = chapter.title
+            row.addSubview(title)
+
+            sv.addSubview(row); descRowViews.append(row)
+            y += rowH + 4
+        }
+
+        if chapters.count > collapsedCount {
+            let toggle = UIButton(type: .custom)
+            toggle.setTitle(chaptersExpanded ? "Show less" : "Show all \(chapters.count) chapters", for: .normal)
+            toggle.setTitleColor(Theme.accent, for: .normal)
+            toggle.titleLabel?.font = UIFont.boldSystemFont(ofSize: 13)
+            toggle.contentHorizontalAlignment = .left
+            toggle.frame = CGRect(x: padding, y: y + 4, width: bodyW, height: 24)
+            toggle.addTarget(self, action: #selector(chaptersToggleTapped), for: .touchUpInside)
+            sv.addSubview(toggle); descRowViews.append(toggle)
+            y += 32
+        }
+        y += 6
+        return y
     }
 
     // Collapsible description block. Collapsed to 4 lines; a "Show more"/"Show less"
@@ -2007,6 +2140,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             }
             if !desc.isEmpty {
                 self.descriptionText = desc
+                self.refreshChapters()
                 self.relayout()
             }
             self.restoreCaptionSelection()
