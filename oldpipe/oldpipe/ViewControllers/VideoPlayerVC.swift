@@ -293,6 +293,23 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         CATransaction.commit()
     }
 
+    // The status label and spinner follow the player between the inline container and the
+    // fullscreen overlay. Left in the container they render behind the overlay, so a quality
+    // switch (or a reconnect) made in fullscreen showed no "Loading stream..." feedback at all.
+    // Fullscreen parks the label above the controls bar instead of under it.
+    private func layoutStatusViews(in host: UIView, fullscreen: Bool) {
+        let w = host.bounds.width
+        let h = host.bounds.height
+        if let sl = statusLabel {
+            sl.frame = CGRect(x: 0, y: fullscreen ? h - 74 : h - 34, width: w, height: 34)
+            if sl.superview !== host { host.addSubview(sl) }
+        }
+        if let spin = spinner {
+            spin.center = CGPoint(x: w / 2, y: h / 2)
+            if spin.superview !== host { host.addSubview(spin) }
+        }
+    }
+
     private func detachLayer() {
         sp.layer.removeFromSuperlayer()
     }
@@ -494,6 +511,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             let barH: CGFloat = 40
             controlsView?.frame = CGRect(x: 0, y: overlay.bounds.height - barH, width: overlay.bounds.width, height: barH)
             layoutControls(width: overlay.bounds.width)
+            layoutStatusViews(in: overlay, fullscreen: true)
             syncSheetWindow()
         }
 
@@ -504,10 +522,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         container.frame = CGRect(x: 0, y: 0, width: w, height: videoH)
         thumbView?.frame = CGRect(x: 0, y: 0, width: w, height: videoH)
         playBtn?.frame = CGRect(x: (w - 64) / 2, y: (videoH - 64) / 2, width: 64, height: 64)
-        statusLabel?.frame = CGRect(x: 0, y: videoH - 34, width: w, height: 34)
-        spinner?.center = CGPoint(x: w / 2, y: videoH / 2)
 
         if fsOverlay == nil {
+            layoutStatusViews(in: container, fullscreen: false)
             tapCatcher?.frame = CGRect(x: 0, y: 0, width: w, height: videoH)
             sp.layer.frame = container.bounds
             controlsView?.frame = CGRect(x: 0, y: videoH - 40, width: w, height: 40)
@@ -610,6 +627,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         // so the wait reads as "working" rather than "stuck". whiteLarge = iOS 2+ safe.
         let spin = UIActivityIndicatorView(style: .whiteLarge)
         spin.hidesWhenStopped = true
+        // Sits over the tap-catcher in fullscreen — must not swallow the tap that shows the bar.
+        spin.isUserInteractionEnabled = false
         spin.center = CGPoint(x: w / 2, y: videoH / 2)
         container.addSubview(spin)
         spinner = spin
@@ -2733,6 +2752,10 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             layoutControls(width: overlay.bounds.width)
         }
 
+        // Loading / error feedback rides along too — added after the bar so it stays in front
+        // of the tap-catcher.
+        layoutStatusViews(in: overlay, fullscreen: true)
+
         // Captions ride into the overlay too (host rule = fsOverlay ?? videoContainer).
         if captionPlate != nil { ensureCaptionPlate() }
 
@@ -2774,6 +2797,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             container.addSubview(bar)
             layoutControls(width: w)
         }
+        if let container = videoContainer { layoutStatusViews(in: container, fullscreen: false) }
         overlay.removeFromSuperview()
         fsOverlay = nil
         teardownSheetWindow()
