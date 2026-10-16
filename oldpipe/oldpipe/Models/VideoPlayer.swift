@@ -81,6 +81,11 @@ class VideoPlayer {
     // "Reconnecting…" instead of showing a dead frame. Recovery runs with or without it.
     var onRecovery: ((RecoveryState) -> Void)?
 
+    // Fired by reconcileRate when a chosen speed turns out not to hold on this stream, so the
+    // VC can say so. The speed is refused after the fact rather than up front because the item
+    // cannot be asked reliably beforehand — see supportsRate.
+    var onRateReverted: (() -> Void)?
+
     // MARK: - Autoplay queue (playlists)
     // Set by PlaylistDetailVC before pushing the player. When the current item plays to the
     // end, the singleton auto-advances to the next queued video (stopping at the end — no
@@ -158,6 +163,7 @@ class VideoPlayer {
         wantsPlayback = false
         lastTickSeconds = -1
         stalledTicks = 0
+        rateZeroTicks = 0
         if !recovering { recoveryAttempts = 0 }
         updateNowPlayingInfo()
         startTicker()
@@ -214,16 +220,22 @@ class VideoPlayer {
     // The speed is intentionally sticky across videos (including queue auto-advance) for the
     // rest of the session, and not persisted to disk.
     private(set) var playbackRate: Float = 1.0
+    // Consecutive ticks the player has sat at rate 0 while an off-speed rate was asked for.
+    private var rateZeroTicks = 0
 
-    // Not every item can be played off-speed: AVPlayer on iOS 6 only does 1.0 for HLS, which
-    // is how the transmuxed HD qualities are served, so speed works at 360p (progressive MP4)
-    // and is refused above it. Ask the item instead of hardcoding that rule — a build running
-    // on a newer OS, or a locally downloaded file, answers for itself.
-    // Before the item is ready these flags are not meaningful yet, so assume it is allowed.
+    // Not every item can be played off-speed, but canPlayFastForward is a much narrower claim
+    // than it looks: QA1772 specifies that a readyToPlay item plays at any rate in 1.0...2.0
+    // even when that flag is false — it only speaks for rates ABOVE 2.0, which the speed menu
+    // never offers. Gating the fast options on it refused 2x on streams that play it perfectly
+    // well: the transmuxed HD tiers report false and hold 2x anyway (confirmed on iOS 8 at
+    // 1080p, where reconcileRate never fired). So the fast side is allowed up to 2.0 and the
+    // flag is consulted only past it. canPlaySlowForward IS the right property for the sub-1.0
+    // options, so that one still decides.
+    // Before the item is ready neither flag is meaningful, so assume it is allowed.
     func supportsRate(_ rate: Float) -> Bool {
         guard let it = item, it.status == .readyToPlay else { return true }
-        if rate > 1.0 { return it.canPlayFastForward }
         if rate < 1.0 { return it.canPlaySlowForward }
+        if rate > 2.0 { return it.canPlayFastForward }
         return true
     }
 
@@ -241,16 +253,40 @@ class VideoPlayer {
         return true
     }
 
-    // An item may also accept the assignment and then quietly revert to 1.0, in which case
-    // the flags above lied and only the running player can tell us. Checked once per tick so
-    // the stored speed keeps matching what is actually being played (and the player sheet
-    // stops claiming a speed that isn't in effect).
+    // An item may accept the assignment and then quietly revert, in which case only the
+    // running player can tell us. Checked once per tick so the stored speed keeps matching
+    // what is actually being played (and the player sheet stops claiming a speed that isn't
+    // in effect). Now that the fast options are no longer refused up front, this is THE check
+    // that catches a stream which cannot really sustain the rate.
+    //
+    // Two shapes of revert. Dropping to a different non-zero rate is unambiguous and acted on
+    // at once. Dropping to zero is not — ordinary rebuffering looks identical — so it has to
+    // persist, and the window sits short of stallTicks on purpose: a stream struggling at 2x
+    // should fall back to normal speed (which also halves what it has to pull) rather than be
+    // torn down and reconnected at a rate it was never going to hold.
+    private static let rateZeroGraceTicks = 5
+
     private func reconcileRate() {
-        guard playbackRate != 1.0, wantsPlayback, let p = player else { return }
-        guard p.rate > 0, abs(p.rate - playbackRate) > 0.01 else { return }
+        guard playbackRate != 1.0, wantsPlayback, let p = player else { rateZeroTicks = 0; return }
+        if p.rate == 0 {
+            rateZeroTicks += 1
+            guard rateZeroTicks >= VideoPlayer.rateZeroGraceTicks else { return }
+            DebugLog.log("VideoPlayer", "rate \(playbackRate) collapsed to 0 for \(rateZeroTicks)s (hls=\(lastLoadWasHLS))")
+            revertRate()
+            p.rate = playbackRate   // the player is parked — restart it at normal speed
+            return
+        }
+        rateZeroTicks = 0
+        guard abs(p.rate - playbackRate) > 0.01 else { return }
         DebugLog.log("VideoPlayer", "rate \(playbackRate) reverted by player to \(p.rate) (hls=\(lastLoadWasHLS))")
+        revertRate()
+    }
+
+    private func revertRate() {
         playbackRate = 1.0
+        rateZeroTicks = 0
         updateNowPlayingInfo()
+        onRateReverted?()
     }
 
     func seek(toFraction f: Double) {

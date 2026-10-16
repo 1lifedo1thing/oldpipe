@@ -242,6 +242,10 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         // watchdog is doing rather than leaving a frozen frame with no explanation.
         sp.onRecovery = { [weak self] state in self?.handleRecovery(state) }
 
+        // A speed that the stream turns out not to hold is refused after the fact, so the
+        // singleton has to be able to reach us to say so.
+        sp.onRateReverted = { [weak self] in self?.handleRateReverted() }
+
         // Captions survive a push/pop of another VC (cues stay parsed) — restart the ticker
         // that viewWillDisappear stopped.
         if activeCaptionIndex >= 0, !captionCues.isEmpty {
@@ -257,6 +261,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         // no VC is on screen, autoplay still advances; only the mini bar reflects it.
         sp.onAdvance = nil
         sp.onRecovery = nil
+        sp.onRateReverted = nil
         NotificationCenter.default.removeObserver(self)
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
         if let t = objc_getAssociatedObject(self, &timerKey) as? Timer { t.invalidate() }
@@ -1634,13 +1639,11 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             // Speed sheet: speedOptions in order, then Cancel.
             guard buttonIndex != actionSheet.cancelButtonIndex else { return }
             guard buttonIndex >= 0, buttonIndex < VideoPlayerVC.speedOptions.count else { return }
+            // Only the slow options can still be refused outright (the item is asked about
+            // those, and it answers honestly). A fast one that the stream cannot really hold
+            // comes back through handleRateReverted a few seconds later instead.
             if !sp.setPlaybackRate(VideoPlayerVC.speedOptions[buttonIndex].rate) {
-                let alert = UIAlertView()
-                alert.title = "Speed"
-                alert.message = "This stream only plays at normal speed. Switch to 360p for speed control."
-                alert.addButton(withTitle: "OK")
-                alert.cancelButtonIndex = 0
-                alert.show()
+                showSpeedAlert("This stream only plays at normal speed or faster.")
             }
         } else if actionSheet.tag == 7 {
             // Quality sheet: [360p?, pendingHLSStreams...], then Cancel.
@@ -2379,6 +2382,21 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private func currentSpeedLabel() -> String {
         let r = sp.playbackRate
         return VideoPlayerVC.speedOptions.first(where: { $0.rate == r })?.label ?? "Normal"
+    }
+
+    private func showSpeedAlert(_ message: String) {
+        let alert = UIAlertView()
+        alert.title = "Speed"
+        alert.message = message
+        alert.addButton(withTitle: "OK")
+        alert.cancelButtonIndex = 0
+        alert.show()
+    }
+
+    // The singleton already put the speed back to Normal by the time this runs — say so, or
+    // the menu silently disagreeing with the pick looks like the tap was simply ignored.
+    private func handleRateReverted() {
+        showSpeedAlert("This stream could not keep up at that speed \u{2022} back to Normal.")
     }
 
     // Second-level sheet, same shape as the captions one: current pick check-marked.
