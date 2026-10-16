@@ -141,7 +141,7 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     private var playBtn: UIButton?
     private var statusLabel: UILabel?
     private var spinner: UIActivityIndicatorView?
-    private var titleLabel: UILabel?
+    private var titleLabel: CopyableLabel?
     private var channelLabel: UILabel?
     private var chanBtn: UIButton?
     private var metaLabel: UILabel?
@@ -396,6 +396,8 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
 
         var y = (videoContainer?.frame.maxY ?? floor(w * 9.0 / 16.0)) + 12
         titleLabel?.text = newVideo.title
+        // The label is reused across videos, so the copy payload has to follow the text.
+        titleLabel?.copyText = newVideo.title
         let titleH = titleLabel?.sizeThatFits(CGSize(width: w - padding * 2, height: 200)).height ?? 20
         titleLabel?.frame = CGRect(x: padding, y: y, width: w - padding * 2, height: titleH)
         y += titleH + 8
@@ -649,12 +651,18 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         // Title
         let padding: CGFloat = 12
         y += 12
-        let titleL = UILabel()
+        let titleL = CopyableLabel()
         titleL.backgroundColor = .clear
         titleL.textColor = UIColor(white: 0.95, alpha: 1)
         titleL.font = UIFont.boldSystemFont(ofSize: 16)
         titleL.numberOfLines = 3
         titleL.text = video.title
+        // UILabel does not take touches by default — without this the long press never fires.
+        titleL.isUserInteractionEnabled = true
+        titleL.copyText = video.title
+        titleL.copyMenuTitle = "Copy title"
+        titleL.addGestureRecognizer(UILongPressGestureRecognizer(
+            target: self, action: #selector(copyableLongPressed(_:))))
         let titleH = titleL.sizeThatFits(CGSize(width: w - padding * 2, height: 200)).height
         titleL.frame = CGRect(x: padding, y: y, width: w - padding * 2, height: titleH)
         sv.addSubview(titleL)
@@ -802,6 +810,9 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
     // action buttons and re-lays the async sections, then sizes the scroll content once.
     private func relayout() {
         guard let sv = scrollView else { return }
+        // The description label is a copy target; a visible menu would be left pointing at a
+        // view that is about to be removed (same reason layoutTabSection hides it).
+        UIMenuController.shared.setMenuVisible(false, animated: false)
         for v in descRowViews { v.removeFromSuperview() }
         descRowViews.removeAll()
 
@@ -977,12 +988,18 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         let fullH = heightForText(descriptionText, font: bodyFont, width: bodyW, maxLines: 0)
         let truncated = fullH > collapsedH + 1
 
-        let body = UILabel()
+        let body = CopyableLabel()
         body.backgroundColor = .clear
         body.textColor = UIColor(white: 0.8, alpha: 1)
         body.font = bodyFont
         body.numberOfLines = descExpanded ? 0 : 4
         body.text = descriptionText
+        body.isUserInteractionEnabled = true
+        // The whole description, not the 4 lines on screen — copying works while collapsed.
+        body.copyText = descriptionText
+        body.copyMenuTitle = "Copy description"
+        body.addGestureRecognizer(UILongPressGestureRecognizer(
+            target: self, action: #selector(copyableLongPressed(_:))))
         let bodyH = descExpanded ? fullH : collapsedH
         body.frame = CGRect(x: padding, y: y, width: bodyW, height: bodyH)
         sv.addSubview(body); descRowViews.append(body)
@@ -1303,6 +1320,18 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         menu.setMenuVisible(true, animated: true)
     }
 
+    // Same deal for the title and the description body, which are labels rather than row
+    // containers — a UILabel is a UIResponder, so it can host the menu itself.
+    @objc private func copyableLongPressed(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began, let lbl = g.view as? CopyableLabel,
+              !lbl.copyText.isEmpty, lbl.becomeFirstResponder() else { return }
+        let menu = UIMenuController.shared
+        menu.menuItems = [UIMenuItem(title: lbl.copyMenuTitle,
+                                     action: #selector(CopyableLabel.copyValue(_:)))]
+        menu.setTargetRect(lbl.bounds, in: lbl)
+        menu.setMenuVisible(true, animated: true)
+    }
+
     private static let commentBodyFont = UIFont.systemFont(ofSize: 13)
 
     // Wrapping a long comment is the single most expensive thing in the list, so each body
@@ -1504,6 +1533,10 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
         sheet.delegate = self
         sheet.title = shareURL()
         sheet.addButton(withTitle: "Copy Link")
+        // The long press on the title / description is invisible until you try it; these make
+        // the same two actions discoverable. Description only when there is one to copy.
+        sheet.addButton(withTitle: "Copy Title")
+        if !descriptionText.isEmpty { sheet.addButton(withTitle: "Copy Description") }
         sheet.addButton(withTitle: "Open in Safari")
         let cancelIdx = sheet.addButton(withTitle: "Cancel")
         sheet.cancelButtonIndex = cancelIdx
@@ -1556,6 +1589,12 @@ class VideoPlayerVC: UIViewController, UIActionSheetDelegate, UIAlertViewDelegat
             switch actionSheet.buttonTitle(at: buttonIndex) {
             case "Copy Link":
                 UIPasteboard.general.string = shareURL()
+                flash(shareBtn, "Copied \u{2713}", revertTo: "Share")
+            case "Copy Title":
+                UIPasteboard.general.string = video.title
+                flash(shareBtn, "Copied \u{2713}", revertTo: "Share")
+            case "Copy Description":
+                UIPasteboard.general.string = descriptionText
                 flash(shareBtn, "Copied \u{2713}", revertTo: "Share")
             case "Open in Safari":
                 if let u = URL(string: shareURL()) { UIApplication.shared.openURL(u) }
@@ -2978,6 +3017,25 @@ private class CommentRowView: UIView {
     }
 
     @objc func copyComment(_ sender: Any?) {
+        UIPasteboard.general.string = copyText
+    }
+}
+
+// Label that can host its own "Copy …" menu — used for the video title and the description
+// body. Same contract as CommentRowView: a custom selector rather than copy:, so the item
+// never shows up on unrelated responders. copyText is the full text, which for the
+// description is not what the (collapsed) label is displaying.
+private class CopyableLabel: UILabel {
+    var copyText = ""
+    var copyMenuTitle = "Copy"
+
+    override var canBecomeFirstResponder: Bool { return true }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        return action == #selector(CopyableLabel.copyValue(_:))
+    }
+
+    @objc func copyValue(_ sender: Any?) {
         UIPasteboard.general.string = copyText
     }
 }
